@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paper-trading decision loop: public market data + Jev API. DRY RUN ONLY."""
+"""Paper-trading decision loop: public market data + Jev via OpenRouter. DRY RUN ONLY."""
 from __future__ import annotations
 
 import json
@@ -16,8 +16,9 @@ from typing import Any
 OUT_DIR = Path(__file__).resolve().parent
 RESULTS_PATH = OUT_DIR / "results.json"
 SUMMARY_PATH = OUT_DIR / "SUMMARY.md"
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
-MODEL = "jev-latest"
+# OpenRouter System One (Jev). Native TypeSafe URL also works with a TypeSafe key.
+JEV_URL = "https://openrouter.ai/api/v1/systemone"
+MODEL = "~typesafe/jev-latest"
 DURATION_S = 120
 INTERVAL_S = 2.5
 START_CASH = 10_000.0
@@ -157,12 +158,17 @@ def call_jev(api_key: str, state: str) -> tuple[dict[str, Any], float]:
         "state": state,
         "questions": {**jev_questions("crypto"), **jev_questions("stock")},
     }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": "https://github.com/CharlieChenyuZhang/jev-trading",
+        "X-OpenRouter-Title": "jev-trading-dryrun",
+    }
     t0 = time.perf_counter()
     try:
         resp = http_json(
             JEV_URL,
             method="POST",
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers=headers,
             body=body,
             timeout=20.0,
         )
@@ -244,11 +250,15 @@ def parse_answers(answers: dict) -> dict[str, Any]:
 
 
 def main() -> int:
-    api_key = os.environ.get("TYPESAFE_API_KEY") or ""
+    api_key = (
+        os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("TYPESAFE_API_KEY")
+        or ""
+    )
     if not api_key:
-        RESULTS_PATH.write_text(json.dumps({"error": "TYPESAFE_API_KEY missing", "len": 0}, indent=2))
-        SUMMARY_PATH.write_text("# Blocked\n\n`TYPESAFE_API_KEY` not set.\n")
-        print("BLOCKED: TYPESAFE_API_KEY not set")
+        RESULTS_PATH.write_text(json.dumps({"error": "OPENROUTER_API_KEY/TYPESAFE_API_KEY missing", "len": 0}, indent=2))
+        SUMMARY_PATH.write_text("# Blocked\n\nSet `OPENROUTER_API_KEY` (preferred) or `TYPESAFE_API_KEY`.\n")
+        print("BLOCKED: OPENROUTER_API_KEY / TYPESAFE_API_KEY not set")
         return 2
 
     print(f"KEY_OK len={len(api_key)}")

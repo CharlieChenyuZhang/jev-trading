@@ -1,10 +1,10 @@
 # jev-trading
 
-Paper-trading (dry-run) loop that feeds live public market state into [Jev](https://jevapi.dev/) (`jev-latest`) and simulates fills. No real orders.
+Paper-trading (dry-run) loop that feeds live public market state into [Jev](https://openrouter.ai/~typesafe/jev-latest) via **OpenRouter** and simulates fills. No real orders.
 
 ## Markets
 
-- **Crypto:** BTC-USD via Coinbase Exchange public REST (order book + trades)
+- **Crypto:** BTC-USD via Coinbase Exchange public REST (top-of-book + trades)
 - **Stock:** AAPL via Yahoo Finance public chart endpoint
 
 ## Setup
@@ -12,12 +12,14 @@ Paper-trading (dry-run) loop that feeds live public market state into [Jev](http
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install requests  # stdlib urllib is enough; requests optional
-export TYPESAFE_API_KEY=...   # from console.typesafe.ai
+export OPENROUTER_API_KEY=...   # from openrouter.ai — preferred
+# or: export TYPESAFE_API_KEY=...  # also accepted (same Bearer header)
 python run_dry_hft.py
 ```
 
-Requires `TYPESAFE_API_KEY`. The script POSTs to `https://api.typesafe.ai/v1/systemone` with model `jev-latest`.
+Calls `POST https://openrouter.ai/api/v1/systemone` with model `~typesafe/jev-latest` (TypeSafe System One shape).
+
+Native TypeSafe keys use `https://api.typesafe.ai/v1/systemone` and model `jev-latest` — this repo defaults to OpenRouter because that is the common path with an OpenRouter key.
 
 ## What it does
 
@@ -28,7 +30,7 @@ Every ~2.5s for ~120s:
 3. If noul ≥ 0.6 and confidence ≥ 0.55, simulate a 1% notional fill at bid/ask
 4. Write `results.json` and `SUMMARY.md` (gitignored)
 
-Latency is typically 70–500ms per Jev call — short-horizon decision trading, not exchange-colocation HFT.
+Latency is typically a few hundred ms per Jev call — short-horizon decision trading, not exchange-colocation HFT.
 
 ## Safety
 
