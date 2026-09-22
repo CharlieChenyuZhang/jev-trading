@@ -91,6 +91,8 @@ function marketCard(name, live, alive) {
     <div class="kpi"><span>Ticks</span><b>${live.ticks_so_far ?? '—'}</b></div>
     <div class="kpi"><span>Latency avg</span><b>${fmt(live.latency_ms?.avg,1)} ms</b></div>
     <div class="kpi"><span>Decisions</span><b>B ${dist.buy||0} / S ${dist.sell||0} / H ${dist.hold||0}</b></div>
+    <div class="kpi"><span>Last pick</span><b>${live.last_answers?.pick_symbol ?? '—'}</b></div>
+    <div class="kpi"><span>Universe picks</span><b>${Object.entries(live.pick_dist||{}).map(([k,v])=>k+':'+v).slice(0,4).join(' ')||'—'}</b></div>
     <div class="kpi"><span>Primary fills</span><b>${live.book?.fills ?? 0}</b></div>
     <div class="kpi"><span>Primary PnL</span><b class="${pnlClass(live.book?.pnl)}">${fmt(live.book?.pnl)}</b></div>
     <div class="kpi"><span>Errors</span><b>${live.errors ?? 0}</b></div>

@@ -1,15 +1,38 @@
 from __future__ import annotations
 
+import time
+import urllib.error
 from typing import Any
 
 from .httputil import http_json
 
+CRYPTO_UNIVERSE = [
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "XRP-USD",
+    "DOGE-USD",
+    "LINK-USD",
+    "AVAX-USD",
+]
 
-def fetch_crypto_btc_usd() -> dict[str, Any]:
-    """Coinbase Exchange public REST — BTC-USD top-of-book + recent trades."""
-    ticker = http_json("https://api.exchange.coinbase.com/products/BTC-USD/ticker")
-    book = http_json("https://api.exchange.coinbase.com/products/BTC-USD/book?level=1")
-    trades = http_json("https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=20")
+STOCK_UNIVERSE = [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "TSLA",
+]
+
+
+def fetch_crypto_product(symbol: str) -> dict[str, Any]:
+    """Coinbase Exchange public REST — top-of-book + recent trades for one product."""
+    base = f"https://api.exchange.coinbase.com/products/{symbol}"
+    ticker = http_json(f"{base}/ticker")
+    book = http_json(f"{base}/book?level=1")
+    trades = http_json(f"{base}/trades?limit=20")
     bid = float(ticker["bid"])
     ask = float(ticker["ask"])
     mid = (bid + ask) / 2.0
@@ -21,15 +44,15 @@ def fetch_crypto_btc_usd() -> dict[str, Any]:
     last_px = float(trades[0]["price"]) if trades else mid
     first_px = float(trades[-1]["price"]) if trades else mid
     ret_bps = (last_px - first_px) / first_px * 10_000 if first_px else 0.0
+
     def _lvl(rows):
         out = []
         for row in rows[:1]:
-            # Coinbase level rows are [price, size, num_orders]
             out.append([float(row[0]), float(row[1])])
         return out
 
     return {
-        "symbol": "BTC-USD",
+        "symbol": symbol,
         "asset_class": "crypto",
         "venue": "coinbase_exchange_public",
         "bid": bid,
@@ -43,12 +66,19 @@ def fetch_crypto_btc_usd() -> dict[str, Any]:
     }
 
 
-def fetch_stock_aapl() -> dict[str, Any]:
-    """Yahoo public chart — AAPL; TOB approximated from last + 1bp spread."""
-    import time
-    import urllib.error
+def fetch_crypto_universe(symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for sym in symbols or CRYPTO_UNIVERSE:
+        try:
+            out[sym] = fetch_crypto_product(sym)
+        except Exception as e:
+            out[sym] = {"symbol": sym, "error": str(e)[:200]}
+    return out
 
-    url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1m&range=1d"
+
+def fetch_stock_symbol(symbol: str) -> dict[str, Any]:
+    """Yahoo public chart — one equity; TOB approximated from last + 1bp spread."""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
     raw = None
     last_err: Exception | None = None
     for attempt in range(4):
@@ -57,7 +87,6 @@ def fetch_stock_aapl() -> dict[str, Any]:
             break
         except urllib.error.HTTPError as e:
             last_err = e
-            # Yahoo often 429s under tight polling — back off and retry
             if e.code == 429 and attempt < 3:
                 time.sleep(1.5 * (attempt + 1))
                 continue
@@ -69,7 +98,7 @@ def fetch_stock_aapl() -> dict[str, Any]:
                 continue
             raise
     if raw is None:
-        raise last_err or RuntimeError("Yahoo chart fetch failed")
+        raise last_err or RuntimeError(f"Yahoo chart fetch failed for {symbol}")
     result = raw["chart"]["result"][0]
     meta = result["meta"]
     quotes = result["indicators"]["quote"][0]
@@ -81,7 +110,7 @@ def fetch_stock_aapl() -> dict[str, Any]:
     half = last * spread_bps / 10_000 / 2
     bid, ask = last - half, last + half
     return {
-        "symbol": "AAPL",
+        "symbol": symbol,
         "asset_class": "stock",
         "venue": "yahoo_chart_public",
         "bid": round(bid, 4),
@@ -92,3 +121,25 @@ def fetch_stock_aapl() -> dict[str, Any]:
         "trade_imbalance": 0.0,
         "note": "stock TOB approximated from last + 1bp spread proxy",
     }
+
+
+def fetch_stock_universe(symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for i, sym in enumerate(symbols or STOCK_UNIVERSE):
+        try:
+            out[sym] = fetch_stock_symbol(sym)
+        except Exception as e:
+            out[sym] = {"symbol": sym, "error": str(e)[:200]}
+        # polite gap to reduce Yahoo 429s when polling a basket
+        if i + 1 < len(symbols or STOCK_UNIVERSE):
+            time.sleep(0.35)
+    return out
+
+
+# Back-compat aliases used by older scripts
+def fetch_crypto_btc_usd() -> dict[str, Any]:
+    return fetch_crypto_product("BTC-USD")
+
+
+def fetch_stock_aapl() -> dict[str, Any]:
+    return fetch_stock_symbol("AAPL")
