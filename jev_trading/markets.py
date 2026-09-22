@@ -21,6 +21,13 @@ def fetch_crypto_btc_usd() -> dict[str, Any]:
     last_px = float(trades[0]["price"]) if trades else mid
     first_px = float(trades[-1]["price"]) if trades else mid
     ret_bps = (last_px - first_px) / first_px * 10_000 if first_px else 0.0
+    def _lvl(rows):
+        out = []
+        for row in rows[:1]:
+            # Coinbase level rows are [price, size, num_orders]
+            out.append([float(row[0]), float(row[1])])
+        return out
+
     return {
         "symbol": "BTC-USD",
         "asset_class": "crypto",
@@ -31,8 +38,8 @@ def fetch_crypto_btc_usd() -> dict[str, Any]:
         "spread_bps": round(spread_bps, 3),
         "ret_short_bps": round(ret_bps, 3),
         "trade_imbalance": round(imbalance, 4),
-        "bids": [[float(p), float(q)] for p, q in book.get("bids", [])[:1]],
-        "asks": [[float(p), float(q)] for p, q in book.get("asks", [])[:1]],
+        "bids": _lvl(book.get("bids", [])),
+        "asks": _lvl(book.get("asks", [])),
     }
 
 
