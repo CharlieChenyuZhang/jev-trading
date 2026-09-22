@@ -34,9 +34,21 @@ EXPERIMENT = _load_experiment()
 
 
 def _variant_list() -> list[dict[str, Any]]:
-    """Primary first (v_best), then compare ledgers — same Jev answers, different execution."""
+    """Primary first (exp_A), then compare ledgers A–H — same Jev answers, different execution."""
     variants = (EXPERIMENT.get("variants") or {})
-    order = ["exp_A_short", "exp_B_short_med", "exp_C_multi", "v2_best", "v2_loose", "v2_strict"]
+    order = [
+        "exp_A_short",
+        "exp_B_short_med",
+        "exp_C_multi",
+        "exp_D_imbalance",
+        "exp_E_exit_overlay",
+        "exp_F_inv_skew",
+        "exp_G_regime_mr",
+        "exp_H_markout_veto",
+        "v2_best",
+        "v2_loose",
+        "v2_strict",
+    ]
     out: list[dict[str, Any]] = []
     for vid in order:
         raw = variants.get(vid)
@@ -55,6 +67,33 @@ def _variant_list() -> list[dict[str, Any]]:
                 "size_mode": raw.get("size_mode", "jev_capped"),
                 "require_agree": list(raw.get("require_agree") or ["move"]),
                 "block_1d_opposite": bool(raw.get("block_1d_opposite", False)),
+                # D
+                "imbalance_min": float(raw.get("imbalance_min", 0.15)),
+                "require_imbalance_agree": bool(raw.get("require_imbalance_agree", False)),
+                # E
+                "exit_overlay": bool(raw.get("exit_overlay", False)),
+                "take_profit_bps": float(raw.get("take_profit_bps", 12)),
+                "trail_arm_bps": float(raw.get("trail_arm_bps", 8)),
+                "trail_drawdown_bps": float(raw.get("trail_drawdown_bps", 6)),
+                "max_hold_sec": raw.get("max_hold_sec"),
+                "max_hold_sec_crypto": float(raw.get("max_hold_sec_crypto", 900)),
+                "max_hold_sec_stock": float(raw.get("max_hold_sec_stock", 1800)),
+                # F
+                "inv_skew": bool(raw.get("inv_skew", False)),
+                "inv_skew_max_frac": float(raw.get("inv_skew_max_frac", 0.40)),
+                "inv_skew_min_cash_frac": float(raw.get("inv_skew_min_cash_frac", 0.25)),
+                "inv_skew_noul_boost": float(raw.get("inv_skew_noul_boost", 0.05)),
+                "inv_skew_boost_sell": bool(raw.get("inv_skew_boost_sell", True)),
+                # G
+                "fade_in_chop": bool(raw.get("fade_in_chop", False)),
+                "chop_size_cap": float(raw.get("chop_size_cap", 100)),
+                "regime_median_abs_bps": float(raw.get("regime_median_abs_bps", 8.0)),
+                # H
+                "markout_veto": bool(raw.get("markout_veto", False)),
+                "markout_adverse_bps": float(raw.get("markout_adverse_bps", -8.0)),
+                "markout_window_sec": list(raw.get("markout_window_sec") or [60, 120]),
+                "markout_lookback_sec": float(raw.get("markout_lookback_sec", 1800)),
+                "markout_min_fills": int(raw.get("markout_min_fills", 3)),
             }
         )
     return out
@@ -192,6 +231,268 @@ def size_for_variant(
     )
 
 
+def imbalance_agrees(
+    direction: str | None,
+    imbalance: float | None,
+    imbalance_min: float = 0.15,
+) -> bool:
+    """D: buy only if imb > +min; sell only if imb < -min; missing/0 fails (conservative)."""
+    if direction not in ("buy", "sell"):
+        return False
+    if imbalance is None:
+        return False
+    try:
+        imb = float(imbalance)
+    except (TypeError, ValueError):
+        return False
+    if imb == 0.0:
+        return False
+    if direction == "buy":
+        return imb > float(imbalance_min)
+    return imb < -float(imbalance_min)
+
+
+def estimate_regime(
+    snaps: dict[str, dict[str, Any]],
+    candidates: list[str],
+    *,
+    median_abs_bps: float = 8.0,
+) -> str:
+    """G: trend if abs(median ret_5m) high and same-sign across candidates; else chop."""
+    rets: list[float] = []
+    for sym in candidates:
+        s = snaps.get(sym) or {}
+        if s.get("mid") is None or s.get("error"):
+            continue
+        try:
+            rets.append(float(s.get("ret_5m_bps") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    if len(rets) < 3:
+        return "chop"
+    med = statistics.median(rets)
+    if abs(med) < float(median_abs_bps):
+        return "chop"
+    signs = {1 if r > 0 else (-1 if r < 0 else 0) for r in rets if r != 0}
+    if len(signs) == 1 and 0 not in signs:
+        return "trend"
+    # require majority same sign as median
+    same = sum(1 for r in rets if (r > 0 and med > 0) or (r < 0 and med < 0))
+    if same / len(rets) >= 0.7 and abs(med) >= float(median_abs_bps):
+        return "trend"
+    return "chop"
+
+
+def apply_regime_fade(
+    *,
+    regime: str,
+    direction: str | None,
+    move: str | None,
+    size_usd: float,
+    variant: dict[str, Any],
+) -> tuple[str | None, str | None, float, bool]:
+    """G: in chop, fade large_up/large_down only; skip small; cap size. Returns (dir, move, size, ok)."""
+    if not variant.get("fade_in_chop") or regime != "chop":
+        return direction, move, size_usd, True
+    if move in ("small_up", "small_down", "flat", None):
+        return "hold", move, 0.0, False
+    if move == "large_up":
+        return "sell", move, min(float(size_usd), float(variant.get("chop_size_cap") or 100)), True
+    if move == "large_down":
+        return "buy", move, min(float(size_usd), float(variant.get("chop_size_cap") or 100)), True
+    return "hold", move, 0.0, False
+
+
+def inv_skew_adjust(
+    *,
+    book: Portfolio,
+    mids: dict[str, float],
+    direction: str | None,
+    size_usd: float,
+    variant: dict[str, Any],
+    noul_min: float,
+) -> tuple[bool, float, float]:
+    """F: inventory skew blocks/boosts. Returns (ok, adj_size, effective_noul_min)."""
+    if not variant.get("inv_skew"):
+        return True, size_usd, noul_min
+    eq = max(book.equity(mids), 1.0)
+    long_n = book.net_long_notional(mids)
+    short_n = book.net_short_notional(mids)
+    cash_frac = book.cash / eq
+    max_frac = float(variant.get("inv_skew_max_frac") or 0.40)
+    min_cash = float(variant.get("inv_skew_min_cash_frac") or 0.25)
+    boost = float(variant.get("inv_skew_noul_boost") or 0.05)
+    eff_noul = float(noul_min)
+    adj = float(size_usd)
+    long_heavy = long_n > max_frac * eq
+    short_heavy = short_n > max_frac * eq
+    if direction == "buy":
+        if long_heavy or cash_frac < min_cash:
+            return False, 0.0, eff_noul
+        if long_heavy:
+            eff_noul = float(noul_min) + boost
+        # soft: when long-heavy already blocked above; soft bump when long-ish (>20%)
+        if long_n > 0.20 * eq:
+            eff_noul = max(eff_noul, float(noul_min) + boost)
+    elif direction == "sell":
+        if short_heavy:
+            return False, 0.0, eff_noul
+        if long_heavy and variant.get("inv_skew_boost_sell"):
+            adj = min(adj * 1.25, float(variant.get("max_notional_usd") or adj))
+    return True, adj, eff_noul
+
+
+def unrealized_bps(qty: float, mid: float, avg: float) -> float:
+    if not avg or avg <= 0 or mid <= 0 or abs(qty) < 1e-12:
+        return 0.0
+    if qty > 0:
+        return (mid - avg) / avg * 10_000.0
+    return (avg - mid) / avg * 10_000.0
+
+
+def trail_drawdown_bps(qty: float, mid: float, peak_mid: float) -> float:
+    if peak_mid <= 0 or mid <= 0 or abs(qty) < 1e-12:
+        return 0.0
+    if qty > 0:
+        return (peak_mid - mid) / peak_mid * 10_000.0
+    return (mid - peak_mid) / peak_mid * 10_000.0
+
+
+class ExitOverlayState:
+    """Per-variant per-symbol entry_ts / peak_mid / trail_armed for E."""
+
+    def __init__(self) -> None:
+        self.by_variant: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def on_fill(self, variant_id: str, symbol: str, mid: float, ts: float) -> None:
+        book = self.by_variant.setdefault(variant_id, {})
+        st = book.get(symbol)
+        if st is None:
+            book[symbol] = {"entry_ts": ts, "peak_mid": float(mid), "trail_armed": False}
+        else:
+            # keep first entry_ts; refresh peak favorably
+            st["peak_mid"] = self._favor_peak(st.get("peak_mid"), mid, None)
+
+    def clear_if_flat(self, variant_id: str, symbol: str, qty: float) -> None:
+        if abs(qty) < 1e-12:
+            self.by_variant.get(variant_id, {}).pop(symbol, None)
+
+    @staticmethod
+    def _favor_peak(peak: float | None, mid: float, qty: float | None) -> float:
+        if peak is None or peak <= 0:
+            return float(mid)
+        return float(peak)
+
+    def update_peak(self, variant_id: str, symbol: str, qty: float, mid: float) -> None:
+        st = self.by_variant.get(variant_id, {}).get(symbol)
+        if not st or mid <= 0:
+            return
+        peak = float(st.get("peak_mid") or mid)
+        if qty > 0:
+            st["peak_mid"] = max(peak, mid)
+        else:
+            st["peak_mid"] = min(peak, mid) if peak > 0 else mid
+
+
+class MarkoutTracker:
+    """H: rolling adverse markout per variant/symbol after fills."""
+
+    def __init__(self) -> None:
+        # variant -> list of fill records
+        self.fills: dict[str, list[dict[str, Any]]] = {}
+
+    def record_fill(
+        self,
+        variant_id: str,
+        *,
+        symbol: str,
+        side: str,
+        mid: float,
+        ts: float,
+    ) -> None:
+        self.fills.setdefault(variant_id, []).append(
+            {
+                "symbol": symbol,
+                "side": side,
+                "fill_mid": float(mid),
+                "ts": float(ts),
+                "markout_bps": None,
+                "marked": False,
+            }
+        )
+
+    def update(self, variant_id: str, mids: dict[str, float], now_ts: float, window: list[float]) -> None:
+        lo, hi = float(window[0]), float(window[1]) if len(window) > 1 else float(window[0])
+        for rec in self.fills.get(variant_id, []):
+            if rec.get("marked"):
+                continue
+            age = now_ts - float(rec["ts"])
+            if age < lo:
+                continue
+            if age > hi and rec.get("markout_bps") is None:
+                # missed window — mark with whatever mid we have now once past hi
+                pass
+            if age > hi + 30:
+                rec["marked"] = True
+                continue
+            mid = float(mids.get(rec["symbol"]) or 0)
+            if mid <= 0:
+                continue
+            fill_mid = float(rec["fill_mid"])
+            if fill_mid <= 0:
+                continue
+            move_bps = (mid - fill_mid) / fill_mid * 10_000.0
+            # adverse vs fill side: buy hurt when mid down; sell hurt when mid up
+            if rec["side"] == "buy":
+                adverse = move_bps  # positive favorable
+            else:
+                adverse = -move_bps
+            # store signed "against" as negative when adverse
+            rec["markout_bps"] = adverse
+            if age >= lo:
+                rec["marked"] = True
+
+    def avg_adverse(
+        self,
+        variant_id: str,
+        symbol: str,
+        *,
+        now_ts: float,
+        lookback_sec: float,
+        min_fills: int,
+    ) -> float | None:
+        rows = [
+            r
+            for r in self.fills.get(variant_id, [])
+            if r.get("symbol") == symbol
+            and r.get("markout_bps") is not None
+            and (now_ts - float(r["ts"])) <= lookback_sec
+        ]
+        if len(rows) < min_fills:
+            return None
+        return sum(float(r["markout_bps"]) for r in rows) / len(rows)
+
+    def veto(
+        self,
+        variant: dict[str, Any],
+        symbol: str | None,
+        *,
+        now_ts: float,
+    ) -> bool:
+        if not variant.get("markout_veto") or not symbol:
+            return False
+        avg = self.avg_adverse(
+            variant["id"],
+            symbol,
+            now_ts=now_ts,
+            lookback_sec=float(variant.get("markout_lookback_sec") or 1800),
+            min_fills=int(variant.get("markout_min_fills") or 3),
+        )
+        if avg is None:
+            return False
+        return avg < float(variant.get("markout_adverse_bps") or -8.0)
+
+
 def variant_passes(
     *,
     variant: dict[str, Any],
@@ -202,6 +503,9 @@ def variant_passes(
     toxicity: float,
     size_usd: float,
     parsed: dict[str, Any] | None = None,
+    imbalance: float | None = None,
+    effective_noul_min: float | None = None,
+    markout_blocked: bool = False,
 ) -> bool:
     if direction not in ("buy", "sell"):
         return False
@@ -210,7 +514,8 @@ def variant_passes(
         return False
     if size_usd < 1:
         return False
-    if noul < float(variant["noul_min"]):
+    noul_gate = float(effective_noul_min) if effective_noul_min is not None else float(variant["noul_min"])
+    if noul < noul_gate:
         return False
     if dir_tail < float(variant["conf_min"]):
         return False
@@ -221,6 +526,11 @@ def variant_passes(
     if req and not horizons_agree(parsed, req):
         return False
     if variant.get("block_1d_opposite") and blocked_by_1d(parsed, direction):
+        return False
+    if variant.get("require_imbalance_agree"):
+        if not imbalance_agrees(direction, imbalance, float(variant.get("imbalance_min") or 0.15)):
+            return False
+    if markout_blocked:
         return False
     return True
 
@@ -610,7 +920,16 @@ def _checkpoint(
         snap["require_agree"] = cfg.get("require_agree")
         snap["block_1d_opposite"] = cfg.get("block_1d_opposite")
         snap["why"] = cfg.get("why")
+        snap["require_imbalance_agree"] = cfg.get("require_imbalance_agree")
+        snap["exit_overlay"] = cfg.get("exit_overlay")
+        snap["inv_skew"] = cfg.get("inv_skew")
+        snap["fade_in_chop"] = cfg.get("fade_in_chop")
+        snap["markout_veto"] = cfg.get("markout_veto")
         live["shadows"][sid] = snap
+    if ticks:
+        live["regime"] = ticks[-1].get("regime")
+        live["trade_imbalance"] = ticks[-1].get("trade_imbalance")
+        live["variant_pass"] = ticks[-1].get("variant_pass")
     (out / "live.json").write_text(json.dumps(live, indent=2))
     (out / "recent_ticks.json").write_text(json.dumps(ticks[-200:], indent=2))
 
@@ -670,12 +989,15 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
     )
     book = Portfolio()
     shadow_books: dict[str, Portfolio] = {s["id"]: Portfolio() for s in shadow_cfgs}
+    exit_state = ExitOverlayState()
+    markout_tracker = MarkoutTracker()
     ticks: list[dict] = []
     latencies: list[float] = []
     errors: list[dict] = []
     t_end = time.time() + duration
     i = 0
     last_mids: dict[str, float] = {}
+    last_regime: str = "chop"
 
     while time.time() < t_end:
         i += 1
@@ -701,6 +1023,14 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         outer_bps, neutral_bps = vol_bands(snaps)
         tick["candidates"] = candidates
         tick["return_buckets_bps"] = {"outer": outer_bps, "neutral": neutral_bps}
+        g_cfg = next((v for v in VARIANTS if v.get("fade_in_chop")), None)
+        regime = estimate_regime(
+            snaps,
+            candidates,
+            median_abs_bps=float((g_cfg or {}).get("regime_median_abs_bps") or 8.0),
+        )
+        last_regime = regime
+        tick["regime"] = regime
 
         state = build_state(
             market_id,
@@ -783,6 +1113,12 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             "size_mode": cfg.get("size_mode", "jev_capped"),
             "require_agree": (PRIMARY or {}).get("require_agree") or ["move"],
             "block_1d_opposite": bool((PRIMARY or {}).get("block_1d_opposite", False)),
+            "require_imbalance_agree": bool((PRIMARY or {}).get("require_imbalance_agree", False)),
+            "imbalance_min": float((PRIMARY or {}).get("imbalance_min", 0.15)),
+            "inv_skew": bool((PRIMARY or {}).get("inv_skew", False)),
+            "fade_in_chop": bool((PRIMARY or {}).get("fade_in_chop", False)),
+            "markout_veto": bool((PRIMARY or {}).get("markout_veto", False)),
+            "exit_overlay": bool((PRIMARY or {}).get("exit_overlay", False)),
         }
         size_usd = size_for_variant(
             variant=primary_variant,
@@ -798,14 +1134,98 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         tick["variant_sizes"] = {}
         fill = None
         shadow_fills: dict[str, Any] = {}
+        now_ts = time.time()
+        max_open = int(cfg.get("max_open_symbols") or 8)
+        session_ok = (not cfg.get("rth_only")) or in_us_rth()
+        tick["session_ok"] = session_ok
 
+        # --- E exit overlay: run before entry, E books only ---
+        for scfg in shadow_cfgs:
+            if not scfg.get("exit_overlay"):
+                continue
+            sid = scfg["id"]
+            sb = shadow_books[sid]
+            hold_sec = scfg.get("max_hold_sec")
+            if hold_sec is None:
+                hold_sec = (
+                    scfg.get("max_hold_sec_crypto")
+                    if market_id == "crypto"
+                    else scfg.get("max_hold_sec_stock")
+                )
+            hold_sec = float(hold_sec or (900 if market_id == "crypto" else 1800))
+            tp = float(scfg.get("take_profit_bps") or 12)
+            arm = float(scfg.get("trail_arm_bps") or 8)
+            dd = float(scfg.get("trail_drawdown_bps") or 6)
+            for sym in list(sb.positions.keys()):
+                qty = float(sb.positions.get(sym, 0.0) or 0.0)
+                if abs(qty) < 1e-12:
+                    continue
+                snap_e = snaps.get(sym) or {}
+                mid_e = float(snap_e.get("mid") or sb.mark_mid(sym) or 0)
+                if mid_e <= 0:
+                    continue
+                avg = float(sb.avg_entry.get(sym) or mid_e)
+                u_bps = unrealized_bps(qty, mid_e, avg)
+                st = exit_state.by_variant.get(sid, {}).get(sym) or {
+                    "entry_ts": now_ts,
+                    "peak_mid": mid_e,
+                    "trail_armed": False,
+                }
+                exit_state.by_variant.setdefault(sid, {})[sym] = st
+                if u_bps >= arm:
+                    st["trail_armed"] = True
+                exit_state.update_peak(sid, sym, qty, mid_e)
+                st = exit_state.by_variant[sid][sym]
+                reason = None
+                if u_bps >= tp:
+                    reason = "take_profit"
+                elif (now_ts - float(st.get("entry_ts") or now_ts)) >= hold_sec:
+                    reason = "max_hold"
+                elif st.get("trail_armed") and trail_drawdown_bps(qty, mid_e, float(st.get("peak_mid") or mid_e)) >= dd:
+                    reason = "trail_stop"
+                if not reason:
+                    continue
+                xf = sb.close_position(
+                    symbol=sym,
+                    mid=mid_e,
+                    bid=float(snap_e.get("bid") or mid_e),
+                    ask=float(snap_e.get("ask") or mid_e),
+                    meta={
+                        "i": i,
+                        "book": sid,
+                        "exit": True,
+                        "exit_reason": reason,
+                        "unrealized_bps": round(u_bps, 2),
+                        "move": move,
+                    },
+                )
+                if xf:
+                    shadow_fills[sid] = xf
+                    exit_state.clear_if_flat(sid, sym, float(sb.positions.get(sym, 0.0) or 0.0))
+                    markout_tracker.record_fill(
+                        sid, symbol=sym, side=xf["side"], mid=mid_e, ts=now_ts
+                    )
+
+        # H markout update each tick
+        for scfg in shadow_cfgs:
+            if scfg.get("markout_veto"):
+                markout_tracker.update(
+                    scfg["id"],
+                    mids,
+                    now_ts,
+                    list(scfg.get("markout_window_sec") or [60, 120]),
+                )
+
+        picked_imb = None
         if picked and picked != "none" and picked in snaps and snaps[picked].get("mid") is not None:
             snap = snaps[picked]
+            try:
+                picked_imb = float(snap.get("trade_imbalance"))
+            except (TypeError, ValueError):
+                picked_imb = None
+            tick["trade_imbalance"] = picked_imb
             tick["selected_symbol"] = picked
             tick["mid"] = snap["mid"]
-            max_open = int(cfg.get("max_open_symbols") or 8)
-            session_ok = (not cfg.get("rth_only")) or in_us_rth()
-            tick["session_ok"] = session_ok
             tick["open_symbols"] = open_symbol_count(book)
             if (
                 session_ok
@@ -819,6 +1239,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     toxicity=toxicity,
                     size_usd=size_usd,
                     parsed=parsed,
+                    imbalance=picked_imb,
                 )
                 and symbol_exposure_ok(book, picked, float(snap["mid"]), size_usd, sym_cap)
             ):
@@ -843,34 +1264,66 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 )
             for scfg in shadow_cfgs:
                 sid = scfg["id"]
+                # G regime fade may invert direction / size
+                v_dir, v_move, _, g_ok = apply_regime_fade(
+                    regime=regime,
+                    direction=direction,
+                    move=move,
+                    size_usd=size_usd,
+                    variant=scfg,
+                )
+                if scfg.get("fade_in_chop") and not g_ok:
+                    tick["variant_sizes"][sid] = 0.0
+                    continue
+                use_dir = v_dir if scfg.get("fade_in_chop") else direction
+                use_move = v_move if scfg.get("fade_in_chop") else move
                 v_size = size_for_variant(
                     variant=scfg,
-                    direction=direction,
+                    direction=use_dir,
                     pick=picked,
-                    move=move,
+                    move=use_move,
                     size_raw=size_raw,
                     size_probs=size_probs,
                     edge_score=float(edge_score) if edge_score is not None else None,
                 )
+                if scfg.get("fade_in_chop") and regime == "chop" and g_ok:
+                    v_size = min(v_size, float(scfg.get("chop_size_cap") or 100))
+                # F inventory skew
+                skew_ok, v_size, eff_noul = inv_skew_adjust(
+                    book=shadow_books[sid],
+                    mids=mids,
+                    direction=use_dir,
+                    size_usd=v_size,
+                    variant=scfg,
+                    noul_min=float(scfg.get("noul_min") or 0.42),
+                )
                 tick["variant_sizes"][sid] = v_size
+                mo_block = markout_tracker.veto(scfg, picked, now_ts=now_ts)
+                # skip new entry if this sid already got an exit fill this tick
+                if sid in shadow_fills and isinstance(shadow_fills[sid], dict) and shadow_fills[sid].get("exit"):
+                    continue
                 if (
                     session_ok
+                    and skew_ok
                     and allow_new_symbol(shadow_books[sid], picked, max_open)
                     and variant_passes(
                         variant=scfg,
-                        direction=direction,
-                        move=move,
+                        direction=use_dir,
+                        move=use_move,
                         noul=noul,
                         dir_tail=conf,
                         toxicity=toxicity,
                         size_usd=v_size,
                         parsed=parsed,
+                        imbalance=picked_imb,
+                        effective_noul_min=eff_noul,
+                        markout_blocked=mo_block,
                     )
                     and symbol_exposure_ok(shadow_books[sid], picked, float(snap["mid"]), v_size, sym_cap)
                 ):
-                    shadow_fills[sid] = shadow_books[sid].maybe_trade(
+                    sf = shadow_books[sid].maybe_trade(
                         symbol=picked,
-                        side=direction,
+                        side=use_dir,
                         mid=snap["mid"],
                         bid=snap["bid"],
                         ask=snap["ask"],
@@ -881,11 +1334,25 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                             "dir_tail": conf,
                             "toxicity": toxicity,
                             "edge": edge_score,
-                            "move": move,
+                            "move": use_move,
                             "size_usd_jev": v_size,
                             "book": sid,
+                            "regime": regime,
+                            "trade_imbalance": picked_imb,
                         },
                     )
+                    if sf:
+                        shadow_fills[sid] = sf
+                        if scfg.get("exit_overlay"):
+                            exit_state.on_fill(sid, picked, float(snap["mid"]), now_ts)
+                        if scfg.get("markout_veto"):
+                            markout_tracker.record_fill(
+                                sid,
+                                symbol=picked,
+                                side=use_dir,
+                                mid=float(snap["mid"]),
+                                ts=now_ts,
+                            )
         else:
             tick["selected_symbol"] = picked or "none"
 
@@ -894,33 +1361,61 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         tick["equity"] = round(book.equity(mids), 2)
         tick["pnl"] = round(book.mark_pnl(mids), 2)
         tick["shadow_pnl"] = {sid: round(sb.mark_pnl(mids), 2) for sid, sb in shadow_books.items()}
-        # Whether each A/B/C variant would pass this tick (same Jev answers, different gates)
+        # Whether each A–H variant would pass this tick (same Jev answers, different gates)
         variant_pass: dict[str, bool] = {}
         for v in VARIANTS:
             v_cfg = primary_variant if v["id"] == primary_variant.get("id") else v
+            v_dir, v_move, _, g_ok = apply_regime_fade(
+                regime=regime,
+                direction=direction,
+                move=move,
+                size_usd=size_usd,
+                variant=v_cfg,
+            )
+            use_dir = v_dir if v_cfg.get("fade_in_chop") else direction
+            use_move = v_move if v_cfg.get("fade_in_chop") else move
+            if v_cfg.get("fade_in_chop") and not g_ok:
+                variant_pass[v["id"]] = False
+                continue
             if v["id"] == primary_variant.get("id"):
                 v_size = size_usd
             elif v["id"] in (tick.get("variant_sizes") or {}):
                 v_size = float(tick["variant_sizes"][v["id"]])
             else:
                 v_size = size_for_variant(
-                    variant=v,
-                    direction=direction,
+                    variant=v_cfg,
+                    direction=use_dir,
                     pick=picked,
-                    move=move,
+                    move=use_move,
                     size_raw=size_raw,
                     size_probs=size_probs,
                     edge_score=float(edge_score) if edge_score is not None else None,
                 )
-            variant_pass[v["id"]] = variant_passes(
-                variant=v_cfg,
-                direction=direction,
-                move=move,
-                noul=noul,
-                dir_tail=conf,
-                toxicity=toxicity,
+            book_for_v = book if v["id"] == primary_variant.get("id") else shadow_books.get(v["id"], book)
+            skew_ok, v_size2, eff_noul = inv_skew_adjust(
+                book=book_for_v,
+                mids=mids,
+                direction=use_dir,
                 size_usd=v_size,
-                parsed=parsed,
+                variant=v_cfg,
+                noul_min=float(v_cfg.get("noul_min") or 0.42),
+            )
+            mo_block = markout_tracker.veto(v_cfg, picked, now_ts=now_ts) if v_cfg.get("markout_veto") else False
+            variant_pass[v["id"]] = bool(
+                skew_ok
+                and variant_passes(
+                    variant=v_cfg,
+                    direction=use_dir,
+                    move=use_move,
+                    noul=noul,
+                    dir_tail=conf,
+                    toxicity=toxicity,
+                    size_usd=v_size2,
+                    parsed=parsed,
+                    imbalance=picked_imb if picked else None,
+                    effective_noul_min=eff_noul,
+                    markout_blocked=mo_block,
+                )
             )
         tick["variant_pass"] = variant_pass
         ticks.append(tick)
@@ -952,6 +1447,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     "move_1h": parsed.get("move_1h"),
                     "trend_1d": parsed.get("trend_1d"),
                 },
+                "regime": tick.get("regime"),
+                "trade_imbalance": tick.get("trade_imbalance"),
                 "variant_pass": variant_pass,
                 "candidates": tick.get("candidates"),
                 "return_buckets_bps": tick.get("return_buckets_bps"),

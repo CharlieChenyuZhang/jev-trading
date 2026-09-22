@@ -125,7 +125,7 @@ HTML = r'''<!doctype html>
     </div>
   </div>
   <div class="card">
-    <div class="hd"><h2>对照账本</h2><span class="tiny">同一 Jev 信号 · 不同执行规则</span></div>
+    <div class="hd"><h2>对照账本 A–H</h2><span class="tiny">同一 Jev 信号 · A–H 不同执行规则</span></div>
     <div class="compare-wrap">
       <table>
         <thead><tr><th>账本</th><th>门槛 / 上限</th><th>成交数</th><th>PnL</th><th>权益</th><th>现金</th><th>说明</th></tr></thead>
@@ -224,6 +224,8 @@ function render(data) {
   prev.equity = equity; prev.pnl = pnl; prev.cash = cash;
 
   const side = a.direction || '—';
+  const regime = live.regime ?? a.regime ?? '—';
+  const imb = live.trade_imbalance ?? a.trade_imbalance;
   document.getElementById('signal').innerHTML = `
     <div class="cell"><div class="k">标的</div><div class="v">${a.pick_symbol ?? '—'}</div></div>
     <div class="cell"><div class="k">动作</div><div class="v ${sideClass(side)}">${(side||'—').toUpperCase()}</div></div>
@@ -233,6 +235,8 @@ function render(data) {
     <div class="cell"><div class="k">Move 10m</div><div class="v">${a.move_10m ?? '—'}</div></div>
     <div class="cell"><div class="k">Move 1h</div><div class="v">${a.move_1h ?? '—'}</div></div>
     <div class="cell"><div class="k">Trend 1d</div><div class="v">${a.trend_1d ?? '—'}</div></div>
+    <div class="cell"><div class="k">Regime</div><div class="v">${regime}</div></div>
+    <div class="cell"><div class="k">Imbalance</div><div class="v">${imb==null?'—':fmt(imb,3)}</div></div>
     <div class="cell"><div class="k">Noul</div><div class="v">${fmt(a.should_trade,3)}</div></div>
     <div class="cell"><div class="k">Dir Tail</div><div class="v">${fmt(a.dir_tail,3)}</div></div>
     <div class="cell"><div class="k">Toxicity</div><div class="v">${fmt(a.toxicity,2)}</div></div>
@@ -275,10 +279,17 @@ function render(data) {
   document.getElementById('compare').innerHTML = bookRows(live).map(r => {
     const agree = Array.isArray(r.gates?.require_agree) ? r.gates.require_agree.join('+') : (r.require_agree ? (Array.isArray(r.require_agree)?r.require_agree.join('+'):r.require_agree) : '—');
     const blk = (r.gates?.block_1d_opposite ?? r.block_1d_opposite) ? 'block1d' : 'no-block1d';
+    const flags = [
+      r.require_imbalance_agree ? 'imb' : null,
+      r.exit_overlay ? 'exit' : null,
+      r.inv_skew ? 'inv' : null,
+      r.fade_in_chop ? 'regime' : null,
+      r.markout_veto ? 'markout' : null,
+    ].filter(Boolean).join(',') || 'base';
     return `
     <tr>
       <td><b>${r.id}</b></td>
-      <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}<br/><span class="tiny">agree:${agree} · ${blk}</span></td>
+      <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}<br/><span class="tiny">agree:${agree} · ${blk} · ${flags}</span></td>
       <td>${r.fills ?? 0}</td>
       <td class="${pnlClass(r.pnl)}">${r.pnl>0?'+':''}${money(r.pnl)}</td>
       <td>$${money(r.equity)}</td>

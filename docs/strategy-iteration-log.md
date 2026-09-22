@@ -164,3 +164,27 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~11:08–11:40 PT; campaign end ~14:06 PT. If ends_ts passes and both smokes exit → final summary + request routine delete (`jev-trading-hourly-strategy-iterate`).
+
+
+## 2026-09-22 11:27 PT · iteration 4 · CHANGE (A–H compare ledgers)
+
+### Observed
+- A/B/C multi-horizon observe running; need fuller execution A/B (imbalance, exits, inv skew, regime MR, markout veto) while keeping A primary.
+
+### Lessons learned
+- Horizon agree alone does not test microstructure / inventory / exit / adverse-selection overlays.
+- Same-tick multi-ledger compare remains the right design; extend shadows to D–H without truncating decisions JSONL.
+
+### Strategy decision · CHANGE
+1. Experiment `jev_paper_A_to_H_2026_09_22` (iteration 4): primary **exp_A_short**; shadows B–H.
+2. D imbalance agree; E TP/time/trail exits; F inv skew; G regime fade-in-chop; H markout veto.
+3. Append-only decisions; enrich `variant_pass` for all A–H; log exit fills under shadow_fills.
+4. Restart campaign `A_to_H_observe` for remaining wall time until prior ends_ts.
+
+### Code / config changes (if any)
+- `jev_trading/data/experiment.json`, `paper.py` (`close_position`), `smoke.py` helpers + tick loop, `dashboard/server.py`
+- `docs/EXPERIMENT.md`, this log; archive `out/archive_pre_A_to_H/`
+
+### Next observe window
+- Fresh primary/shadow books; decisions JSONL continues append-only.
+- Success: live shadows include D–H; decisions have variant_pass keys A–H; dashboard compare shows A–H.

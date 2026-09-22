@@ -142,6 +142,31 @@ class Portfolio:
             # if still no mid, contribute 0 unrealized (hold at cost)
         return self.realized_pnl + unreal
 
+    def net_long_notional(self, mids: dict[str, float]) -> float:
+        self.remember_mids(mids)
+        total = 0.0
+        for sym, qty in self.positions.items():
+            if qty <= 0:
+                continue
+            m = self.mark_mid(sym, mids.get(sym))
+            if m <= 0:
+                m = float(self.avg_entry.get(sym) or 0.0)
+            total += qty * m
+        return total
+
+    def net_short_notional(self, mids: dict[str, float]) -> float:
+        """Absolute short notional (positive number)."""
+        self.remember_mids(mids)
+        total = 0.0
+        for sym, qty in self.positions.items():
+            if qty >= 0:
+                continue
+            m = self.mark_mid(sym, mids.get(sym))
+            if m <= 0:
+                m = float(self.avg_entry.get(sym) or 0.0)
+            total += abs(qty) * m
+        return total
+
     def maybe_trade(
         self,
         *,
@@ -209,3 +234,40 @@ class Portfolio:
         }
         self.fills.append(fill)
         return fill
+
+    def close_position(
+        self,
+        *,
+        symbol: str,
+        mid: float,
+        bid: float,
+        ask: float,
+        meta: dict | None = None,
+    ) -> dict | None:
+        """Flatten a symbol by trading opposite side for full position notional."""
+        pos = float(self.positions.get(symbol, 0.0) or 0.0)
+        if abs(pos) < 1e-12:
+            return None
+        m = self.mark_mid(symbol, mid)
+        if pos > 0:
+            side = "sell"
+            px = float(bid or m or 0)
+            notional = abs(pos) * px
+        else:
+            side = "buy"
+            px = float(ask or m or 0)
+            notional = abs(pos) * px
+        if notional < 1 or px <= 0:
+            return None
+        meta = dict(meta or {})
+        meta.setdefault("exit", True)
+        meta.setdefault("flatten", True)
+        return self.maybe_trade(
+            symbol=symbol,
+            side=side,
+            mid=m if m > 0 else px,
+            bid=bid,
+            ask=ask,
+            notional_usd=notional,
+            meta=meta,
+        )
