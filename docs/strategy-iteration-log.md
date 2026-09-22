@@ -137,3 +137,30 @@ Implement and observe:
 - Fresh primary/shadow books; append-only decisions continue on same JSONL paths.
 - Success: live shadows include B/C; decisions have horizons + variant_pass; dashboard compare shows A/B/C.
 
+
+
+## 2026-09-22 10:40 PT · iteration 3 · KEEP/OBSERVE (horizons A/B/C early)
+
+### Observed
+- Campaign `horizons_ABC_observe` still active; ends_ts `2026-09-22T21:06:00Z` (~14:06 PT); ~3.4h remaining. PIDs crypto/stock/dashboard all alive; dashboard :8787 up. No restarts this hour.
+- **Crypto primary `exp_A_short` (~54 ticks / ~10m since restart):** equity ≈ **$10013** / PnL ≈ **+$13**; **16 fills**; cash ≈ $10k; **8/8 open names** (at max-symbol cap). mark_stale=0; no mid=0 marks. Decision mix ~15 buy / 8 sell / 31 hold. Pick concentration: APE / SUKU / AURORA heavy. Sizes mostly $100–$200 (not stuck on $250). Net book mix of small alts longs/shorts (e.g. SUKU long, ZEC/XRP/USELESS/SXT shorts).
+- **Crypto shadows:** `exp_B_short_med` and `exp_C_multi` still **0 fills / flat $10k**. `variant_pass` true only for A (~20/57 ABC ticks); B/C never true this window. Horizons disagree on ~54% of ticks — agree gates doing their job (quiet by design so far).
+- **Stock primary (~6 ticks, RTH, session_ok=true):** equity ≈ **$10000.04** / PnL ≈ **+$0.04**; **3 fills** (all sells: AMZN + SNAP shorts); **2 open**. mark_stale=0. Shadows: B ≈ same as A (+$0.04 / 3 fills); C ≈ −$0.01 / 2 fills.
+- Accounting vs trading: MTM path looks healthy (no inventing wipeouts). Early PnL noise is real microstructure / mark, not quote-zero bugs.
+
+### Lessons learned
+1. **Good:** last-good MTM + max-8 open + stock RTH appear to be holding — stock PnL is near-flat with real quotes; crypto open count capped at 8.
+2. **Good:** multi-horizon logging + `variant_pass` is working; B/C silence on crypto confirms short-only chase vs multi-horizon disagreement is common (~half of ticks).
+3. **Bad / watch:** crypto primary still name-clusters (APE/SUKU/AURORA) and sits at the open-name ceiling quickly — capacity may be spent on low-liquidity alts before majors get room.
+4. **Bad / early:** cannot yet rank A vs B vs C on PnL — B/C have almost no crypto fills; stock sample too small (6 ticks). Changing gates now would be noise.
+5. Prefer KEEP/OBSERVE until shadows accumulate fills or a concrete failure (stale marks, RTH leak, cap breach) appears.
+
+### Strategy decision · KEEP/OBSERVE
+- No strategy/code change this hour. Continue A primary + B/C shadows for remaining wall time.
+- Watch next windows for: (a) first sustained B/C crypto fills, (b) whether open-name cap blocks better names, (c) stock fill rate under RTH.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~11:08–11:40 PT; campaign end ~14:06 PT. If ends_ts passes and both smokes exit → final summary + request routine delete (`jev-trading-hourly-strategy-iterate`).
