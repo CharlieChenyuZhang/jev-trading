@@ -271,3 +271,33 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~14:08 PT may land after ends_ts — if ends_ts passed and both smokes exit → final summary + delete routine `jev-trading-hourly-strategy-iterate`.
+
+## 2026-09-22 14:30 PT · iteration 8 · FINAL (A–H observe window complete)
+
+### Observed
+- Campaign `A_to_H_observe` **ended** at `ends_ts` `2026-09-22T21:06:00Z` (~14:06 PT). Wall clock now ~14:30 PT. Crypto PID 1137920 and stock PID 1137921 **exited**; dashboard PID 1137915 still alive; http://127.0.0.1:8787 returns 200. No restart (window over).
+- Final JSONL: `logs/raw_decisions/crypto.jsonl` **1373** lines; `stock.jsonl` **144** lines (append-only preserved). Live last_ts crypto `21:05:50Z` / stock `21:05:31Z` (both just before ends_ts). Errors: 0 / 0.
+- **Crypto primary `exp_A_short` (920 ticks / ~2.64h):** equity ≈ **$9923** / PnL ≈ **−$77** / **128 fills** / **8 open** (XRP/NEAR/SXT/ALCX/LCX/AURORA shorts-or-mixed + DRIFT/SUKU). Decision mix 229 buy / 187 sell / 504 hold. Top picks: **DRIFT / AURORA / ALCX / SXT / BNKR**. Regime on AH JSONL: **chop ~631 / trend ~289** (~69% chop); trade_imbalance ≈ 0. Zero stale/zero-mid hits in JSONL book snapshots.
+- **Crypto shadows (final):** **G ≈ +$187 / 120 fills / 8 open** (clear best). **B ≈ +$78 / 23 fills / 8**. **C ≈ +$13 / 13 fills / 8**. D still **0 fills / flat $10k**. F ≈ A (−$75 / 123). **E ≈ −$111 / 316 fills** (heaviest churn). **H ≈ −$172 / 86 fills** (worst PnL). Rank by PnL: G ≫ B > C > D=0 > F≈A > E > H.
+- **Stock (97 ticks):** primary ≈ **+$2.72 / 10 fills / 8 open** (TSLA dust + META/MAR/AAPL/COIN/GOOGL/DELL shorts, INTC long). B ≈ −$0.24 / 9; C ≈ −$0.40 / 6; D flat 0; E ≈ −$0.14 / 23; F/H ≈ A (+$2.72); **G ≈ −$2.12 / 10** (slightly behind A). Nearly all ticks chop; sample still small vs crypto. No invented wipeouts.
+
+### Lessons learned
+1. **Good / concrete:** On crypto over the full A–H window, **regime fade (G) was the only large green book** (~+$187 vs A −$77) while sharing the same open names — strongest promote candidate for a *fresh* post-window campaign, not a mid-run flip.
+2. **Good:** Horizon-agree gates **B** and **C** finished green with thinner activity (fewer fills, less alt churn) — useful as selective overlays, not silent failures.
+3. **Good:** v2 guards held through exit — primary open capped at 8; stock stayed near-flat with sane marks; JSONL never truncated; no mid=0 accounting wipeouts this campaign.
+4. **Bad / reinforced:** **E exit overlay overtrades** (316 vs A’s 128 fills) and stays net-negative — do not promote time/TP/trail as-is on thin alts.
+5. **Bad / reinforced:** **H markout veto** cut fills but finished **worst PnL** (~−$172) — soft veto alone did not fix adverse selection this window.
+6. **Bad / watch:** Primary still **clusters thin alts** (DRIFT/AURORA/SXT/ALCX) at the open-name ceiling; imbalance D never fired (imbalance≈0) so that ledger stayed uninformative.
+7. **Caveat:** G leads crypto but is slightly red on the small stock sample — next campaign should keep dual-market A/B with G as crypto candidate primary, not a blind global flip. Stock evidence remains underpowered (97 ticks).
+
+### Strategy decision · FINAL / KEEP code (window closed)
+- Observe window finished. **No mid-exit code change** this hour (processes already stopped).
+- Recommended next campaign (when user starts one): trial **G as crypto primary** with A/B/C as shadows; keep E/H as research-only or retune; consider a thin-name / min-price filter so capacity is not spent on sub-cent alts; leave D until imbalance signal exists.
+- Leave dashboard up for post-mortem viewing; do not restart smokes past ends_ts.
+
+### Code / config changes (if any)
+- None this hour.
+
+### Next observe window
+- **None for this campaign.** Hourly iterate routine should be **deleted** after this final push. Data remains under `logs/raw_decisions/` and this log; resume only if a new campaign is launched.
+
