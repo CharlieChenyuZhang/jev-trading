@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Separate smoke runners for crypto vs stock (dry-run only).
 
-Jev selects a symbol from a universe each tick, then decides direction.
+Layered Jev decisions (pick → move → direction → noul → size), with
+vol-adaptive return buckets and top-K candidates each tick.
 """
 from __future__ import annotations
 
@@ -26,41 +27,153 @@ MARKETS: dict[str, dict[str, Any]] = {
     "crypto": {
         "fetch_universe": fetch_crypto_universe,
         "universe": CRYPTO_UNIVERSE,
-        "strategy_hint": "crypto microstructure / multi-coin Coinbase USD pairs",
-        "noul_min": 0.60,
-        "conf_min": 0.55,
+        "strategy_hint": "crypto microstructure / Coinbase USD — short-horizon move buckets",
+        # Open thresholds calibrated to observed Jev noul/dir tails (FMZ: open vs wait)
+        "noul_min": 0.38,
+        "conf_min": 0.35,  # uses directional tail P(buy)|P(sell), not concentration
+        "candidate_k": 32,
         "default_duration_s": 45,
-        "interval_s": 8.0,  # large Coinbase basket (lite parallel)
+        "interval_s": 8.0,
         "shadows": [
-            {"id": "shadow_035_025", "noul_min": 0.35, "conf_min": 0.25},
-            {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
             {"id": "shadow_030_020", "noul_min": 0.30, "conf_min": 0.20},
+            {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
+            {"id": "shadow_strict_060_055", "noul_min": 0.60, "conf_min": 0.55},
         ],
     },
     "stock": {
         "fetch_universe": fetch_stock_universe,
         "universe": STOCK_UNIVERSE,
-        "strategy_hint": "US equity multi-name short-horizon (session-aware)",
-        "noul_min": 0.65,
-        "conf_min": 0.55,
+        "strategy_hint": "US equity multi-name short-horizon — session-aware move buckets",
+        "noul_min": 0.40,
+        "conf_min": 0.35,
+        "candidate_k": 24,
         "default_duration_s": 45,
-        "interval_s": 30.0,  # large Yahoo basket — keep polite
+        "interval_s": 25.0,
         "shadows": [
-            {"id": "shadow_035_025", "noul_min": 0.35, "conf_min": 0.25},
-            {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
             {"id": "shadow_030_020", "noul_min": 0.30, "conf_min": 0.20},
+            {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
+            {"id": "shadow_strict_060_055", "noul_min": 0.60, "conf_min": 0.55},
         ],
     },
 }
 
+MOVE_TO_DIR = {
+    "large_up": "buy",
+    "small_up": "buy",
+    "large_down": "sell",
+    "small_down": "sell",
+    "flat": "hold",
+}
 
-def build_state(market_id: str, snaps: dict[str, dict], strategy_hint: str, universe: list[str]) -> str:
-    compact = []
-    err_n = 0
+SIZE_EDGE_MAP = [
+    (0.5, 0.0),
+    (1.5, 50.0),
+    (2.5, 100.0),
+    (3.5, 250.0),
+    (4.5, 500.0),
+    (9.0, 1000.0),
+]
+
+
+def vol_bands(snaps: dict[str, dict[str, Any]]) -> tuple[float, float]:
+    """Adaptive return bucket edges (bps), floored for fees/spread."""
+    rets = [
+        abs(float(s.get("ret_short_bps") or 0))
+        for s in snaps.values()
+        if s.get("mid") is not None and not s.get("error")
+    ]
+    if not rets:
+        return 8.0, 2.0
+    sigma = statistics.median(rets) or 2.0
+    # ~30s horizon vs short window: scale up a bit; keep fee floor
+    outer = max(6.0, min(40.0, 1.8 * sigma))
+    neutral = max(1.5, min(outer / 3.0, 6.0))
+    return round(outer, 2), round(neutral, 2)
+
+
+def rank_candidates(snaps: dict[str, dict[str, Any]], universe: list[str], k: int) -> list[str]:
+    scored: list[tuple[float, str]] = []
     for sym in universe:
         s = snaps.get(sym) or {}
-        if s.get("error"):
-            err_n += 1
+        if s.get("mid") is None or s.get("error"):
+            continue
+        ret = abs(float(s.get("ret_short_bps") or 0))
+        imb = abs(float(s.get("trade_imbalance") or 0))
+        spr = float(s.get("spread_bps") or 0)
+        # prefer movement + imbalance, lightly penalize wide spreads
+        score = ret + 40.0 * imb - 0.15 * spr
+        scored.append((score, sym))
+    scored.sort(reverse=True)
+    out = [sym for _, sym in scored[:k]]
+    # always keep a few majors if present
+    for anchor in ("BTC-USD", "ETH-USD", "SOL-USD", "AAPL", "MSFT", "NVDA", "SPY", "QQQ"):
+        if anchor in snaps and snaps[anchor].get("mid") is not None and anchor not in out:
+            out.append(anchor)
+    return out[: max(k, len(out))]
+
+
+def resolve_size_usd(
+    *,
+    direction: str | None,
+    pick: str | None,
+    size_choice: float,
+    size_probs: dict | None,
+    edge_score: float | None,
+) -> float:
+    """Enforce absolute size: buy/sell must be non-zero; hold/none → 0."""
+    if not pick or pick == "none" or direction in (None, "hold"):
+        return 0.0
+    if size_choice >= 1:
+        return float(size_choice)
+    # Jev often mass-votes size=0 while still leaning buy/sell — take best non-zero mass
+    probs = size_probs or {}
+    best_nz = 0.0
+    best_p = -1.0
+    for k, p in probs.items():
+        try:
+            usd = float(k)
+            pr = float(p)
+        except (TypeError, ValueError):
+            continue
+        if usd >= 1 and pr > best_p:
+            best_p = pr
+            best_nz = usd
+    if best_nz >= 1 and best_p >= 0.08:
+        return best_nz
+    # last resort: map edge score → absolute USD (still from Jev edge)
+    e = float(edge_score or 0)
+    mapped = 50.0
+    for thr, usd in SIZE_EDGE_MAP:
+        if e <= thr:
+            mapped = usd
+            break
+    return mapped
+
+
+def dir_tail(direction: str | None, dir_probs: dict | None) -> float:
+    """Directional probability mass for the chosen side (open threshold uses this)."""
+    probs = dir_probs or {}
+    if direction == "buy":
+        return float(probs.get("buy") or 0)
+    if direction == "sell":
+        return float(probs.get("sell") or 0)
+    return 0.0
+
+
+def build_state(
+    market_id: str,
+    snaps: dict[str, dict],
+    strategy_hint: str,
+    candidates: list[str],
+    *,
+    outer_bps: float,
+    neutral_bps: float,
+    pool_size: int,
+) -> str:
+    compact = []
+    for sym in candidates:
+        s = snaps.get(sym) or {}
+        if s.get("error") or s.get("mid") is None:
             continue
         compact.append(
             {
@@ -76,17 +189,19 @@ def build_state(market_id: str, snaps: dict[str, dict], strategy_hint: str, univ
             "mode": "paper_trading_dry_run_universe",
             "market": market_id,
             "strategy": strategy_hint,
-            "universe_size": len(universe),
-            "quoted": len(compact),
-            "fetch_errors": err_n,
+            "pool_size": pool_size,
+            "candidate_count": len(compact),
+            "horizon_sec": 30,
+            "return_buckets_bps": {"outer": outer_bps, "neutral": neutral_bps},
             "ts_utc": datetime.now(timezone.utc).isoformat(),
-            "horizon_sec": 5,
+            "paper_cash_usd": 10000,
             "snapshots": compact,
             "instructions": (
-                f"Pick at most one symbol from the {market_id} universe with the best "
-                "short-horizon edge. Prefer none when unclear. Do not mix asset classes. "
-                "Also choose an absolute USD notional size_usd (not a fraction of equity). "
-                "Use 0 when hold/none. Starting paper cash is about $10,000 per book."
+                f"Candidates are the top movers from the {market_id} pool. "
+                "Pick one symbol with edge, forecast the 30s return bucket, "
+                "set buy/sell/hold, and choose an absolute USD size. "
+                "If buy or sell, size_usd must be non-zero. Prefer trading when "
+                "a directional bucket beats flat after spread/costs."
             ),
         },
         separators=(",", ":"),
@@ -99,24 +214,58 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
     e = answers.get("edge") or {}
     p = answers.get("pick_symbol") or {}
     s = answers.get("size_usd") or {}
+    m = answers.get("move") or {}
+    t = answers.get("toxicity") or {}
     size_raw = s.get("choice")
     try:
-        size_usd = float(size_raw) if size_raw is not None else 0.0
+        size_choice = float(size_raw) if size_raw is not None else 0.0
     except (TypeError, ValueError):
-        size_usd = 0.0
+        size_choice = 0.0
+
+    pick = p.get("choice")
+    direction = d.get("choice")
+    move = m.get("choice")
+    # Align direction with move bucket when inconsistent
+    if move in MOVE_TO_DIR:
+        mapped = MOVE_TO_DIR[move]
+        if direction in (None, "hold") and mapped != "hold":
+            direction = mapped
+        elif direction in ("buy", "sell") and mapped == "hold":
+            pass  # keep explicit direction
+        elif direction in ("buy", "sell") and mapped in ("buy", "sell") and direction != mapped:
+            direction = mapped
+
+    edge_score = e.get("score")
+    size_probs = s.get("probabilities")
+    size_usd = resolve_size_usd(
+        direction=direction,
+        pick=pick,
+        size_choice=size_choice,
+        size_probs=size_probs if isinstance(size_probs, dict) else None,
+        edge_score=float(edge_score) if edge_score is not None else None,
+    )
+
+    dir_probs = d.get("probabilities") if isinstance(d.get("probabilities"), dict) else {}
     return {
-        "pick_symbol": p.get("choice"),
+        "pick_symbol": pick,
         "pick_confidence": p.get("confidence"),
         "pick_probs": p.get("probabilities"),
-        "direction": d.get("choice"),
+        "move": move,
+        "move_confidence": m.get("confidence"),
+        "move_probs": m.get("probabilities"),
+        "direction": direction,
         "dir_confidence": d.get("confidence"),
-        "dir_probs": d.get("probabilities"),
+        "dir_probs": dir_probs,
+        "dir_tail": dir_tail(direction, dir_probs),
         "should_trade": n.get("noul"),
-        "edge_score": e.get("score"),
+        "edge_score": edge_score,
         "edge_confidence": e.get("confidence"),
+        "toxicity": t.get("score"),
+        "toxicity_confidence": t.get("confidence"),
+        "size_usd_raw": size_choice,
         "size_usd": size_usd,
         "size_confidence": s.get("confidence"),
-        "size_probs": s.get("probabilities"),
+        "size_probs": size_probs,
     }
 
 
@@ -190,6 +339,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
     universe: list[str] = list(cfg["universe"])
     duration = float(duration_s if duration_s is not None else cfg["default_duration_s"])
     interval = float(cfg["interval_s"])
+    candidate_k = int(cfg.get("candidate_k") or 24)
     out = out_dir or Path.cwd() / "out" / market_id
     out.mkdir(parents=True, exist_ok=True)
 
@@ -203,7 +353,9 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 
     shadow_cfgs = list(cfg.get("shadows") or [])
     print(
-        f"SMOKE [{market_id}] universe={universe} key_ok len={len(api_key)} duration={duration}s",
+        f"SMOKE [{market_id}] pool={len(universe)} candidate_k={candidate_k} "
+        f"gates noul>={cfg['noul_min']} dir_tail>={cfg['conf_min']} "
+        f"key_ok len={len(api_key)} duration={duration}s",
         flush=True,
     )
     started = datetime.now(timezone.utc).isoformat()
@@ -215,12 +367,17 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 "started_ts": started,
                 "duration_s": duration,
                 "interval_s": interval,
+                "candidate_k": candidate_k,
                 "ends_ts_approx": datetime.fromtimestamp(time.time() + duration, tz=timezone.utc).isoformat(),
                 "strategy": cfg["strategy_hint"],
-                "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"], "label": "primary"},
+                "thresholds": {
+                    "noul_min": cfg["noul_min"],
+                    "dir_tail_min": cfg["conf_min"],
+                    "label": "primary",
+                },
                 "shadows": shadow_cfgs,
                 "paper_start_cash": 10000.0,
-                "selection": "jev_pick_symbol",
+                "selection": "jev_pick_top_k_movers",
             },
             indent=2,
         )
@@ -246,18 +403,36 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 
         mids = {sym: float(s["mid"]) for sym, s in snaps.items() if s.get("mid") is not None}
         last_mids = mids or last_mids
-        ok_symbols = [s for s in universe if s in mids]
-        if not ok_symbols:
+        candidates = rank_candidates(snaps, universe, candidate_k)
+        if not candidates:
             errors.append({"i": i, "stage": "market", "error": "no symbols fetched"})
             time.sleep(interval)
             continue
 
-        state = build_state(market_id, snaps, cfg["strategy_hint"], ok_symbols)
-        questions = questions_for_universe(market_id, ok_symbols, strategy_hint=cfg["strategy_hint"])
+        outer_bps, neutral_bps = vol_bands(snaps)
+        tick["candidates"] = candidates
+        tick["return_buckets_bps"] = {"outer": outer_bps, "neutral": neutral_bps}
+
+        state = build_state(
+            market_id,
+            snaps,
+            cfg["strategy_hint"],
+            candidates,
+            outer_bps=outer_bps,
+            neutral_bps=neutral_bps,
+            pool_size=len(universe),
+        )
+        questions = questions_for_universe(
+            market_id,
+            candidates,
+            strategy_hint=cfg["strategy_hint"],
+            outer_bps=outer_bps,
+            neutral_bps=neutral_bps,
+        )
         resp, latency_ms = call_jev(api_key, state, questions)
         latencies.append(latency_ms)
         tick["latency_ms"] = round(latency_ms, 1)
-        tick["mids"] = mids
+        tick["mids"] = {c: mids[c] for c in candidates if c in mids}
 
         if resp.get("error"):
             errors.append({"i": i, "stage": "jev", **{k: resp[k] for k in resp if k != "error"}})
@@ -288,12 +463,12 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         picked = parsed.get("pick_symbol")
         direction = parsed.get("direction")
         noul = float(parsed.get("should_trade") or 0)
-        conf = float(parsed.get("dir_confidence") or 0)
+        conf = float(parsed.get("dir_tail") or 0)  # directional tail, not concentration
+        size_usd = float(parsed.get("size_usd") or 0)
+        tick["size_usd"] = size_usd
         fill = None
         shadow_fills: dict[str, Any] = {}
 
-        size_usd = float(parsed.get("size_usd") or 0)
-        tick["size_usd"] = size_usd
         if picked and picked != "none" and picked in snaps and snaps[picked].get("mid") is not None:
             snap = snaps[picked]
             tick["selected_symbol"] = picked
@@ -314,9 +489,11 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     meta={
                         "i": i,
                         "noul": noul,
-                        "conf": conf,
+                        "dir_tail": conf,
                         "edge": parsed.get("edge_score"),
+                        "move": parsed.get("move"),
                         "size_usd_jev": size_usd,
+                        "size_usd_raw": parsed.get("size_usd_raw"),
                         "book": "primary",
                     },
                 )
@@ -334,8 +511,9 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                             meta={
                                 "i": i,
                                 "noul": noul,
-                                "conf": conf,
+                                "dir_tail": conf,
                                 "edge": parsed.get("edge_score"),
+                                "move": parsed.get("move"),
                                 "size_usd_jev": size_usd,
                                 "book": sid,
                             },
@@ -355,7 +533,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         )
         print(
             f"[{market_id}] tick={i} pick={tick.get('selected_symbol')} "
-            f"dir={direction} size=${size_usd:.0f} noul={noul:.2f} lat={latency_ms:.0f}ms "
+            f"move={parsed.get('move')} dir={direction} size=${size_usd:.0f} "
+            f"noul={noul:.2f} dir_tail={conf:.2f} lat={latency_ms:.0f}ms "
             f"primary_pnl={tick['pnl']}"
             + (f" | {shadow_bits}" if shadow_bits else ""),
             flush=True,
@@ -401,7 +580,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         "model": ticks[-1].get("model") if ticks else None,
         "duration_s": duration,
         "interval_s": interval,
-        "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"]},
+        "thresholds": {"noul_min": cfg["noul_min"], "dir_tail_min": cfg["conf_min"]},
         "ticks": ticks,
         "errors": errors,
         "latency_ms": {
@@ -413,7 +592,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         "book": {
             **_portfolio_snap(book, final_mids),
             "label": "primary",
-            "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"]},
+            "thresholds": {"noul_min": cfg["noul_min"], "dir_tail_min": cfg["conf_min"]},
         },
         "shadow_books": {
             sid: {
@@ -441,21 +620,21 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
     )
 
     shadow_lines = "\n".join(
-        f"- Shadow `{sid}` (noul>={sc['noul_min']}, conf>={sc['conf_min']}): "
+        f"- Shadow `{sid}` (noul>={sc['noul_min']}, dir_tail>={sc['conf_min']}): "
         f"fills={results['shadow_books'][sid]['fills']} / pnl={results['shadow_books'][sid]['pnl']:.2f}"
         for sid, sc in ((s["id"], s) for s in shadow_cfgs)
     ) or "- Shadows: none"
     summary = f"""# Smoke ({market_id})
 
-- Mode: paper only · Jev picks symbol from universe
-- Universe size: {len(universe)} (cap 254 for Jev choice incl. none)
+- Mode: paper only · top-K movers → Jev layered decisions
+- Pool size: {len(universe)} · candidate_k={candidate_k}
 - Strategy: {cfg['strategy_hint']}
 - Duration: ~{duration}s / interval ~{interval}s
 - Ticks: {len(ticks)}
 - Latency ms: min={results['latency_ms']['min']} avg={results['latency_ms']['avg']} max={results['latency_ms']['max']}
 - Pick dist: {picks}
 - Decisions: {dist}
-- Primary (noul>={cfg['noul_min']}, conf>={cfg['conf_min']}): fills={results['book']['fills']} / pnl={results['book']['pnl']:.2f}
+- Primary (noul>={cfg['noul_min']}, dir_tail>={cfg['conf_min']}): fills={results['book']['fills']} / pnl={results['book']['pnl']:.2f}
 {shadow_lines}
 - Errors: {len(errors)}
 """
