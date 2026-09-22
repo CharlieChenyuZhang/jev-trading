@@ -100,8 +100,45 @@ def _variant_list() -> list[dict[str, Any]]:
 
 
 VARIANTS = _variant_list()
-PRIMARY = next((v for v in VARIANTS if v["id"] in ("exp_A_short", "v2_best", "v_best")), VARIANTS[0] if VARIANTS else None)
-COMPARE_VARIANTS = [v for v in VARIANTS if v["id"] != (PRIMARY or {}).get("id")]
+_VARIANTS_BY_ID: dict[str, dict[str, Any]] = {v["id"]: v for v in VARIANTS}
+
+
+def _resolve_primary_id(market_id: str | None = None) -> str | None:
+    """Resolve primary variant id from experiment.json (per-market override supported)."""
+    by_m = EXPERIMENT.get("primary_by_market") or {}
+    if market_id and isinstance(by_m, dict) and by_m.get(market_id):
+        return str(by_m[market_id])
+    if EXPERIMENT.get("primary"):
+        return str(EXPERIMENT["primary"])
+    for cand in ("exp_A_short", "v2_best", "v_best"):
+        if cand in _VARIANTS_BY_ID:
+            return cand
+    return VARIANTS[0]["id"] if VARIANTS else None
+
+
+def _primary_for_market(market_id: str | None = None) -> dict[str, Any] | None:
+    """Full variant dict for this market's primary (includes G/E/F/H overlay fields)."""
+    pid = _resolve_primary_id(market_id)
+    if not pid:
+        return None
+    if pid in _VARIANTS_BY_ID:
+        return dict(_VARIANTS_BY_ID[pid])  # shallow copy so callers can annotate safely
+    # fall back to A / first known
+    for cand in ("exp_A_short", "v2_best", "v_best"):
+        if cand in _VARIANTS_BY_ID:
+            return dict(_VARIANTS_BY_ID[cand])
+    return dict(VARIANTS[0]) if VARIANTS else None
+
+
+def _compare_for_market(market_id: str | None = None) -> list[dict[str, Any]]:
+    primary = _primary_for_market(market_id)
+    pid = (primary or {}).get("id")
+    return [dict(v) for v in VARIANTS if v["id"] != pid]
+
+
+# Module-level default: experiment primary (or A). Per-market resolution happens in run_smoke.
+PRIMARY = _primary_for_market(None)
+COMPARE_VARIANTS = _compare_for_market(None)
 
 MARKETS: dict[str, dict[str, Any]] = {
     "crypto": {
@@ -859,6 +896,7 @@ def _checkpoint(
     shadow_cfgs: list[dict],
     mids: dict[str, float],
     universe: list[str],
+    primary_variant: dict[str, Any] | None = None,
 ) -> None:
     dist = {"buy": 0, "sell": 0, "hold": 0, "other": 0}
     picks: dict[str, int] = {}
@@ -885,21 +923,26 @@ def _checkpoint(
         },
         "book": {
             **_portfolio_snap(book, mids),
-            "label": (PRIMARY or {}).get("id") or "exp_A_short",
-            "noul_min": (PRIMARY or {}).get("noul_min"),
-            "conf_min": (PRIMARY or {}).get("conf_min"),
-            "toxicity_max": (PRIMARY or {}).get("toxicity_max"),
-            "max_notional_usd": (PRIMARY or {}).get("max_notional_usd"),
-            "require_agree": (PRIMARY or {}).get("require_agree") or ["move"],
-            "block_1d_opposite": bool((PRIMARY or {}).get("block_1d_opposite", False)),
-            "why": (PRIMARY or {}).get("why"),
+            "label": (primary_variant or PRIMARY or {}).get("id") or "exp_A_short",
+            "noul_min": (primary_variant or PRIMARY or {}).get("noul_min"),
+            "conf_min": (primary_variant or PRIMARY or {}).get("conf_min"),
+            "toxicity_max": (primary_variant or PRIMARY or {}).get("toxicity_max"),
+            "max_notional_usd": (primary_variant or PRIMARY or {}).get("max_notional_usd"),
+            "require_agree": (primary_variant or PRIMARY or {}).get("require_agree") or ["move"],
+            "block_1d_opposite": bool((primary_variant or PRIMARY or {}).get("block_1d_opposite", False)),
+            "why": (primary_variant or PRIMARY or {}).get("why"),
+            "fade_in_chop": bool((primary_variant or PRIMARY or {}).get("fade_in_chop", False)),
+            "exit_overlay": bool((primary_variant or PRIMARY or {}).get("exit_overlay", False)),
+            "inv_skew": bool((primary_variant or PRIMARY or {}).get("inv_skew", False)),
+            "markout_veto": bool((primary_variant or PRIMARY or {}).get("markout_veto", False)),
         },
         "experiment": EXPERIMENT.get("name"),
+        "strategy_primary": (primary_variant or PRIMARY or {}).get("id"),
         "thresholds": {
-            "noul_min": (PRIMARY or {}).get("noul_min"),
-            "conf_min": (PRIMARY or {}).get("conf_min"),
-            "toxicity_max": (PRIMARY or {}).get("toxicity_max"),
-            "max_notional_usd": (PRIMARY or {}).get("max_notional_usd"),
+            "noul_min": (primary_variant or PRIMARY or {}).get("noul_min"),
+            "conf_min": (primary_variant or PRIMARY or {}).get("conf_min"),
+            "toxicity_max": (primary_variant or PRIMARY or {}).get("toxicity_max"),
+            "max_notional_usd": (primary_variant or PRIMARY or {}).get("max_notional_usd"),
         },
         "decision_dist": dist,
         "pick_dist": picks,
@@ -935,7 +978,7 @@ def _checkpoint(
 
 
 def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path | None = None) -> int:
-    cfg = MARKETS[market_id]
+    cfg = dict(MARKETS[market_id])  # shallow copy; override gates per market primary
     fetch_universe: Callable[[], dict[str, dict[str, Any]]] = cfg["fetch_universe"]
     universe: list[str] = list(cfg["universe"])
     duration = float(duration_s if duration_s is not None else cfg["default_duration_s"])
@@ -943,6 +986,20 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
     candidate_k = int(cfg.get("candidate_k") or 24)
     out = out_dir or Path.cwd() / "out" / market_id
     out.mkdir(parents=True, exist_ok=True)
+
+    primary_variant = _primary_for_market(market_id)
+    if not primary_variant:
+        print(f"BLOCKED [{market_id}]: no primary variant in experiment.json")
+        return 2
+    shadow_cfgs = _compare_for_market(market_id)
+    # Apply primary gates onto cfg so legacy cfg[...] reads match this market's primary
+    cfg["noul_min"] = float(primary_variant["noul_min"])
+    cfg["conf_min"] = float(primary_variant["conf_min"])
+    cfg["toxicity_max"] = float(primary_variant.get("toxicity_max", 2.0))
+    cfg["max_notional_usd"] = float(primary_variant.get("max_notional_usd", 250))
+    cfg["allowed_moves"] = list(primary_variant.get("allowed_moves") or [])
+    cfg["size_mode"] = primary_variant.get("size_mode", "jev_capped")
+    cfg["shadows"] = shadow_cfgs
 
     api_key = resolve_api_key()
     if not api_key:
@@ -952,9 +1009,9 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         print(f"BLOCKED [{market_id}]: missing API key")
         return 2
 
-    shadow_cfgs = list(cfg.get("shadows") or [])
     print(
-        f"SMOKE [{market_id}] pool={len(universe)} candidate_k={candidate_k} "
+        f"SMOKE [{market_id}] primary={primary_variant.get('id')} "
+        f"shadows={len(shadow_cfgs)} pool={len(universe)} candidate_k={candidate_k} "
         f"gates noul>={cfg['noul_min']} dir_tail>={cfg['conf_min']} "
         f"key_ok len={len(api_key)} duration={duration}s",
         flush=True,
@@ -982,6 +1039,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 "paper_start_cash": 10000.0,
                 "selection": "jev_pick_top_k_movers",
                 "experiment": EXPERIMENT.get("name"),
+                "strategy_primary": primary_variant.get("id"),
+                "primary_by_market": EXPERIMENT.get("primary_by_market"),
                 "variants": VARIANTS,
             },
             indent=2,
@@ -1064,7 +1123,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     "market": market_id,
                     "tick": i,
                     "experiment": EXPERIMENT.get("name"),
-                    "strategy_primary": (PRIMARY or {}).get("id"),
+                    "strategy_primary": primary_variant.get("id"),
                     "error": True,
                     "jev_error": tick.get("jev_error"),
                     "latency_ms": tick.get("latency_ms"),
@@ -1082,6 +1141,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     shadow_cfgs=shadow_cfgs,
                     mids=last_mids,
                     universe=universe,
+                    primary_variant=primary_variant,
                 )
             time.sleep(interval)
             continue
@@ -1103,23 +1163,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         size_probs = parsed.get("size_probs") if isinstance(parsed.get("size_probs"), dict) else None
         sym_cap = float(cfg.get("max_symbol_notional_usd") or 1500)
 
-        primary_variant = {
-            "id": (PRIMARY or {}).get("id") or "exp_A_short",
-            "noul_min": cfg["noul_min"],
-            "conf_min": cfg["conf_min"],
-            "toxicity_max": cfg.get("toxicity_max", 2.0),
-            "max_notional_usd": cfg.get("max_notional_usd", 250),
-            "allowed_moves": cfg.get("allowed_moves") or ["large_up", "small_up", "large_down", "small_down"],
-            "size_mode": cfg.get("size_mode", "jev_capped"),
-            "require_agree": (PRIMARY or {}).get("require_agree") or ["move"],
-            "block_1d_opposite": bool((PRIMARY or {}).get("block_1d_opposite", False)),
-            "require_imbalance_agree": bool((PRIMARY or {}).get("require_imbalance_agree", False)),
-            "imbalance_min": float((PRIMARY or {}).get("imbalance_min", 0.15)),
-            "inv_skew": bool((PRIMARY or {}).get("inv_skew", False)),
-            "fade_in_chop": bool((PRIMARY or {}).get("fade_in_chop", False)),
-            "markout_veto": bool((PRIMARY or {}).get("markout_veto", False)),
-            "exit_overlay": bool((PRIMARY or {}).get("exit_overlay", False)),
-        }
+        # primary_variant already resolved for this market (full dict from _variant_list)
         size_usd = size_for_variant(
             variant=primary_variant,
             direction=direction,
@@ -1495,6 +1539,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 shadow_cfgs=shadow_cfgs,
                 mids=mids,
                 universe=universe,
+                primary_variant=primary_variant,
             )
         time.sleep(interval)
 
@@ -1525,6 +1570,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         "duration_s": duration,
         "interval_s": interval,
         "thresholds": {"noul_min": cfg["noul_min"], "dir_tail_min": cfg["conf_min"]},
+        "strategy_primary": primary_variant.get("id"),
         "ticks": ticks,
         "errors": errors,
         "latency_ms": {
@@ -1535,7 +1581,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         },
         "book": {
             **_portfolio_snap(book, final_mids),
-            "label": "primary",
+            "label": primary_variant.get("id") or "primary",
             "thresholds": {"noul_min": cfg["noul_min"], "dir_tail_min": cfg["conf_min"]},
         },
         "shadow_books": {
@@ -1561,6 +1607,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         shadow_cfgs=shadow_cfgs,
         mids=final_mids,
         universe=universe,
+        primary_variant=primary_variant,
     )
 
     shadow_lines = "\n".join(
@@ -1579,7 +1626,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 - Latency ms: min={results['latency_ms']['min']} avg={results['latency_ms']['avg']} max={results['latency_ms']['max']}
 - Pick dist: {picks}
 - Decisions: {dist}
-- Primary (noul>={cfg['noul_min']}, dir_tail>={cfg['conf_min']}): fills={results['book']['fills']} / pnl={results['book']['pnl']:.2f}
+- Primary `{primary_variant.get('id')}` (noul>={cfg['noul_min']}, dir_tail>={cfg['conf_min']}): fills={results['book']['fills']} / pnl={results['book']['pnl']:.2f}
 {shadow_lines}
 - Errors: {len(errors)}
 """

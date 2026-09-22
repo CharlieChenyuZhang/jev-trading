@@ -301,3 +301,27 @@ Implement and observe:
 ### Next observe window
 - **None for this campaign.** Hourly iterate routine should be **deleted** after this final push. Data remains under `logs/raw_decisions/` and this log; resume only if a new campaign is launched.
 
+## 2026-09-22 15:20 PT · iteration 9 · CHANGE (G primary crypto · 24h RSI)
+
+### Observed
+- Prior campaign `A_to_H_observe` ended at ends_ts ~14:06 PT (iter 8 FINAL). Crypto/stock smokes were dead; dashboard PID 1137915 stayed up (:8787 → 200).
+- Final A–H crypto rank: **G ≫ B > C > D=0 > F≈A > E > H** (G ~+$187 vs A −$77). Stock sample small: A slightly ahead of G.
+- `logs/raw_decisions/crypto.jsonl` and `stock.jsonl` preserved append-only (pre-restart ~1373 / 144 lines; still growing).
+
+### Lessons learned
+1. **Promote G on crypto only** — clearest A–H signal; do **not** blind-flip stock primary (G was slightly red vs A on stock).
+2. Hardcoded PRIMARY in `smoke.py` ignored `experiment.json` → fixed with `primary` + `primary_by_market` and full variant dict (incl. fade_in_chop / chop_size_cap).
+3. CHANGE framing = **new campaign wave**: archive prior books, fresh $10k ledgers, new ends_ts (~24h), keep JSONL history.
+
+### Strategy decision · CHANGE
+- Launch campaign **G_primary_24h**: crypto primary **exp_G_regime_mr**, stock primary **exp_A_short** (G remains stock shadow). Shadows = remaining A–H compare ledgers.
+- Hourly RSI reflect: model reviews right vs wrong decisions; on clear lessons → CHANGE (restart new wave); else KEEP / OBSERVE. (Parent owns hourly routine creation.)
+
+### Code / config changes
+- `jev_trading/smoke.py`: resolve primary per market from experiment; full variant dict for tick loop; live/meta report actual primary id.
+- `jev_trading/data/experiment.json`: jev_paper_G_primary_24h_2026_09_22, iteration 9, primary_by_market.
+- `docs/EXPERIMENT.md`, this log; archive `out/archive_pre_G_primary_24h/`; fresh `out/campaign.json` + PIDs.
+
+### Next observe window
+- ~24h until ends_ts 2026-09-23 ~15:19 PT / 22:19 UTC. First hourly reflect should confirm G primary on crypto live ticks and A on stock; watch chop-fade vs trend hours and stock RTH sample size.
+

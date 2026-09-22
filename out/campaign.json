@@ -1,0 +1,19 @@
+{
+  "campaign": "G_primary_24h",
+  "started_ts": "2026-09-22T22:19:42.345983+00:00",
+  "ends_ts": "2026-09-23T22:19:42.345983+00:00",
+  "duration_s": 86400,
+  "markets": [
+    "crypto",
+    "stock"
+  ],
+  "experiment": "jev_paper_G_primary_24h_2026_09_22",
+  "iteration": 9,
+  "primary": "exp_G_regime_mr",
+  "primary_by_market": {
+    "crypto": "exp_G_regime_mr",
+    "stock": "exp_A_short"
+  },
+  "shadows_note": "A\u2013H minus market primary; G is crypto primary, A is stock primary (G stays stock shadow)",
+  "note": "RSI hourly reflect loop: review right/wrong decisions; CHANGE restarts new wave, else KEEP. Fresh $10k books after A\u2013H observe."
+}
