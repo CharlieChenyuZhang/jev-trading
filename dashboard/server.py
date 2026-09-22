@@ -54,10 +54,17 @@ HTML = r'''<!doctype html>
 <main>
   <div class="grid" id="markets"></div>
   <div class="card">
-    <h2>Crypto gate comparison</h2>
+    <h2>Variant comparison (same Jev signal)</h2>
+    <div class="meta" style="color:var(--muted);font-size:12px;margin-bottom:8px">primary = v_best · others = uncertain knobs</div>
+    <h3 style="font-size:13px;color:var(--accent);margin:8px 0">Crypto</h3>
     <table>
-      <thead><tr><th>Book</th><th>Gates</th><th>Fills</th><th>PnL</th><th>Equity</th><th>Pos</th></tr></thead>
-      <tbody id="compare"></tbody>
+      <thead><tr><th>Book</th><th>Gates / cap</th><th>Fills</th><th>PnL</th><th>Equity</th><th>Why</th></tr></thead>
+      <tbody id="compare_crypto"></tbody>
+    </table>
+    <h3 style="font-size:13px;color:var(--accent);margin:16px 0 8px">Stock</h3>
+    <table>
+      <thead><tr><th>Book</th><th>Gates / cap</th><th>Fills</th><th>PnL</th><th>Equity</th><th>Why</th></tr></thead>
+      <tbody id="compare_stock"></tbody>
     </table>
   </div>
   <div class="card">
@@ -72,16 +79,42 @@ const pnlClass = (n) => (n>0 ? 'pos' : (n<0 ? 'neg' : ''));
 function bookRows(live) {
   const rows = [];
   const primary = live.book || {};
+  const th = live.thresholds || {};
   rows.push({
-    id: 'primary',
-    gates: live.thresholds || {noul_min: 'strict', conf_min: ''},
+    id: primary.label || 'v_best',
+    gates: {
+      noul_min: primary.noul_min ?? th.noul_min,
+      conf_min: primary.conf_min ?? th.conf_min,
+      max_notional_usd: primary.max_notional_usd ?? th.max_notional_usd,
+    },
+    why: primary.why || 'primary',
     ...primary,
   });
   const shadows = live.shadows || {};
   for (const [id, s] of Object.entries(shadows)) {
-    rows.push({ id, gates: {noul_min: s.noul_min, conf_min: s.conf_min}, ...s });
+    rows.push({
+      id,
+      gates: {
+        noul_min: s.noul_min,
+        conf_min: s.conf_min,
+        max_notional_usd: s.max_notional_usd,
+      },
+      why: s.why || '',
+      ...s,
+    });
   }
   return rows;
+}
+function renderCompare(tbodyId, live) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.innerHTML = bookRows(live).map(r => `<tr>
+    <td>${r.id}</td>
+    <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}</td>
+    <td>${r.fills ?? 0}</td>
+    <td class="${pnlClass(r.pnl)}">${fmt(r.pnl)}</td>
+    <td>${fmt(r.equity)}</td>
+    <td style="max-width:280px;color:var(--muted);font-size:12px">${r.why || '—'}</td>
+  </tr>`).join('') || '<tr><td colspan="6">waiting for live.json</td></tr>';
 }
 
 function marketCard(name, live, alive) {
@@ -115,24 +148,20 @@ async function refresh() {
     const alive = !!data.markets[m]?.alive;
     markets.insertAdjacentHTML('beforeend', marketCard(m, live, alive));
   }
-  const crypto = data.markets.crypto?.live || {};
-  const tbody = document.getElementById('compare');
-  tbody.innerHTML = bookRows(crypto).map(r => `<tr>
-    <td>${r.id}</td>
-    <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'}</td>
-    <td>${r.fills ?? 0}</td>
-    <td class="${pnlClass(r.pnl)}">${fmt(r.pnl)}</td>
-    <td>${fmt(r.equity)}</td>
-    <td>${fmt(r.position, 6)}</td>
-  </tr>`).join('') || '<tr><td colspan="6">waiting for crypto live.json</td></tr>';
+  renderCompare('compare_crypto', data.markets.crypto?.live || {});
+  renderCompare('compare_stock', data.markets.stock?.live || {});
 
   const answers = document.getElementById('answers');
   answers.innerHTML = ['crypto','stock'].map(m => {
     const a = data.markets[m]?.live?.last_answers || {};
     return `<div class="card"><h2>${m} last</h2>
+      <div class="kpi"><span>pick</span><b>${a.pick_symbol ?? '—'}</b></div>
+      <div class="kpi"><span>move</span><b>${a.move ?? '—'}</b></div>
       <div class="kpi"><span>direction</span><b>${a.direction ?? '—'}</b></div>
       <div class="kpi"><span>noul</span><b>${fmt(a.should_trade,3)}</b></div>
-      <div class="kpi"><span>confidence</span><b>${fmt(a.dir_confidence,3)}</b></div>
+      <div class="kpi"><span>dir_tail</span><b>${fmt(a.dir_tail,3)}</b></div>
+      <div class="kpi"><span>toxicity</span><b>${fmt(a.toxicity,2)}</b></div>
+      <div class="kpi"><span>size_usd</span><b>${fmt(a.size_usd,0)}</b></div>
       <div class="kpi"><span>edge</span><b>${fmt(a.edge_score,2)}</b></div>
     </div>`;
   }).join('');

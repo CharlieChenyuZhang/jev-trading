@@ -1,0 +1,86 @@
+{
+  "name": "jev_paper_ab_2026_09_22",
+  "goal": "Best primary judgment + parallel variants on uncertain knobs; same Jev signal each tick",
+  "primary": "v_best",
+  "uncertain_axes": [
+    "open thresholds (noul / dir_tail)",
+    "toxicity cutoff",
+    "max notional",
+    "whether small_up/small_down count as tradeable"
+  ],
+  "variants": {
+    "v_best": {
+      "role": "primary",
+      "why": "Balanced open bar + $250 cap + allow small moves; toxicity filter on",
+      "noul_min": 0.45,
+      "dir_tail_min": 0.42,
+      "toxicity_max": 2.0,
+      "max_notional_usd": 250,
+      "allowed_moves": [
+        "large_up",
+        "small_up",
+        "large_down",
+        "small_down"
+      ],
+      "size_mode": "jev_capped"
+    },
+    "v_loose": {
+      "role": "compare",
+      "why": "Uncertain: maybe we are over-filtering \u2014 more fills",
+      "noul_min": 0.35,
+      "dir_tail_min": 0.3,
+      "toxicity_max": 2.5,
+      "max_notional_usd": 500,
+      "allowed_moves": [
+        "large_up",
+        "small_up",
+        "large_down",
+        "small_down"
+      ],
+      "size_mode": "jev_capped"
+    },
+    "v_strict": {
+      "role": "compare",
+      "why": "Uncertain: quality over quantity \u2014 fewer/higher-bar fills",
+      "noul_min": 0.55,
+      "dir_tail_min": 0.5,
+      "toxicity_max": 1.6,
+      "max_notional_usd": 100,
+      "allowed_moves": [
+        "large_up",
+        "small_up",
+        "large_down",
+        "small_down"
+      ],
+      "size_mode": "jev_capped"
+    },
+    "v_large_only": {
+      "role": "compare",
+      "why": "Uncertain: only large move buckets worth trading",
+      "noul_min": 0.45,
+      "dir_tail_min": 0.42,
+      "toxicity_max": 2.0,
+      "max_notional_usd": 250,
+      "allowed_moves": [
+        "large_up",
+        "large_down"
+      ],
+      "size_mode": "jev_capped"
+    },
+    "v_edge_size": {
+      "role": "compare",
+      "why": "Uncertain: ignore Jev size choice; size only from edge score map (still Jev edge)",
+      "noul_min": 0.45,
+      "dir_tail_min": 0.42,
+      "toxicity_max": 2.0,
+      "max_notional_usd": 250,
+      "allowed_moves": [
+        "large_up",
+        "small_up",
+        "large_down",
+        "small_down"
+      ],
+      "size_mode": "edge_only"
+    }
+  }
+}
