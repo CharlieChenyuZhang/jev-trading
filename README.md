@@ -1,37 +1,42 @@
 # jev-trading
 
-Paper-trading (dry-run) loop that feeds live public market state into [Jev](https://openrouter.ai/~typesafe/jev-latest) via **OpenRouter** and simulates fills. No real orders.
+Paper-trading (dry-run) smokes that feed live public market state into [Jev](https://openrouter.ai/~typesafe/jev-latest) via **OpenRouter** and simulate fills.
+
+**Crypto and stock are separate** — different strategies, thresholds, and processes. Do not combine them in one decision loop for real work.
 
 ## Markets
 
-- **Crypto:** BTC-USD via Coinbase Exchange public REST (top-of-book + trades)
-- **Stock:** AAPL via Yahoo Finance public chart endpoint
+| Smoke | Symbol | Data | Entry |
+| --- | --- | --- | --- |
+| Crypto | BTC-USD | Coinbase public REST | `python smoke_crypto.py` |
+| Stock | AAPL | Yahoo public chart | `python smoke_stock.py` |
 
 ## Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-export OPENROUTER_API_KEY=...   # from openrouter.ai — preferred
-# or: export TYPESAFE_API_KEY=...  # also accepted (same Bearer header)
-python run_dry_hft.py
+export OPENROUTER_API_KEY=...   # from openrouter.ai
+python smoke_crypto.py          # ~45s paper loop
+python smoke_stock.py
+# or:
+python -m jev_trading.smoke crypto --duration 60
+python -m jev_trading.smoke stock --duration 60
 ```
 
-Calls `POST https://openrouter.ai/api/v1/systemone` with model `~typesafe/jev-latest` (TypeSafe System One shape).
+Also accepts `TYPESAFE_API_KEY` as a fallback env name for the same Bearer token.
 
-Native TypeSafe keys use `https://api.typesafe.ai/v1/systemone` and model `jev-latest` — this repo defaults to OpenRouter because that is the common path with an OpenRouter key.
+Calls `POST https://openrouter.ai/api/v1/systemone` with model `~typesafe/jev-latest`.
 
-## What it does
+## Outputs
 
-Every ~2.5s for ~120s:
+Each smoke writes under `out/<market>/`:
 
-1. Pull crypto + stock top-of-book / short-window features
-2. Ask Jev (in parallel): direction (`buy`/`sell`/`hold`), `should_trade` (noul), edge score
-3. If noul ≥ 0.6 and confidence ≥ 0.55, simulate a 1% notional fill at bid/ask
-4. Write `results.json` and `SUMMARY.md` (gitignored)
+- `results.json` — ticks, latency, simulated book
+- `SUMMARY.md` — short report
 
-Latency is typically a few hundred ms per Jev call — short-horizon decision trading, not exchange-colocation HFT.
+These paths are gitignored.
 
 ## Safety
 
-Dry-run only. Do not point this at live execution without separate risk controls, keys, and explicit enablement.
+Dry-run only. No live orders.

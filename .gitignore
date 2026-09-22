@@ -8,3 +8,4 @@ results.json
 SUMMARY.md
 *.log
 .DS_Store
+out/
