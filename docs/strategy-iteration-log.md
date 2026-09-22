@@ -89,3 +89,23 @@ Implement and observe:
 ### Next observe window
 - Continue v2 observe; hourly iterate routine can cite these raw logs.
 
+
+
+## 2026-09-22 10:12 PT · iteration 1d · CHANGE (git-backed accumulation)
+
+### Observed
+- User wants frequent GitHub pushes of intermediate data; history must accumulate, never overwrite.
+
+### Lessons learned
+- `out/` is gitignored scratch; durable truth must live under `logs/` (JSONL + timestamped snapshots).
+
+### Strategy decision · CHANGE
+- `scripts/push_accum_data.sh` mirrors decisions and writes new `logs/snapshots/.../live_TIMESTAMP.json` each push; refuses JSONL deletes.
+- Push every ~15 minutes + after each hourly iterate.
+
+### Code / config changes (if any)
+- scripts/push_accum_data.sh, logs/README.md; routines updated.
+
+### Next observe window
+- Continue v2; verify GitHub `logs/raw_decisions` grows over time.
+
