@@ -66,6 +66,44 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+def _checkpoint(out: Path, *, market_id: str, ticks: list, latencies: list, errors: list, book: Book, extra: dict | None = None) -> None:
+    dist = {"buy": 0, "sell": 0, "hold": 0, "other": 0}
+    for x in ticks:
+        d = ((x.get("answers") or {}).get("direction"))
+        if d in dist:
+            dist[d] += 1
+        else:
+            dist["other"] += 1
+    live = {
+        "market": market_id,
+        "ticks_so_far": len(ticks),
+        "started_ts": ticks[0]["ts"] if ticks else None,
+        "last_ts": ticks[-1]["ts"] if ticks else None,
+        "latency_ms": {
+            "n": len(latencies),
+            "min": round(min(latencies), 1) if latencies else None,
+            "avg": round(sum(latencies) / len(latencies), 1) if latencies else None,
+            "max": round(max(latencies), 1) if latencies else None,
+        },
+        "book": {
+            "equity": ticks[-1].get("equity") if ticks else book.cash,
+            "pnl": ticks[-1].get("pnl") if ticks else 0.0,
+            "fills": len(book.fills),
+            "position": book.position,
+            "cash": book.cash,
+        },
+        "decision_dist": dist,
+        "errors": len(errors),
+        "last_answers": (ticks[-1].get("answers") if ticks else None),
+    }
+    if extra:
+        live.update(extra)
+    (out / "live.json").write_text(json.dumps(live, indent=2))
+    (out / "recent_ticks.json").write_text(json.dumps(ticks[-200:], indent=2))
+
+
 def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path | None = None) -> int:
     cfg = MARKETS[market_id]
     fetch: Callable[[], dict[str, Any]] = cfg["fetch"]
@@ -82,7 +120,18 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         print(f"BLOCKED [{market_id}]: missing API key")
         return 2
 
-    print(f"SMOKE [{market_id}] key_ok len={len(api_key)} duration={duration}s")
+    print(f"SMOKE [{market_id}] key_ok len={len(api_key)} duration={duration}s", flush=True)
+    started = datetime.now(timezone.utc).isoformat()
+    (out / "run_meta.json").write_text(json.dumps({
+        "market": market_id,
+        "started_ts": started,
+        "duration_s": duration,
+        "interval_s": interval,
+        "ends_ts_approx": datetime.fromtimestamp(time.time() + duration, tz=timezone.utc).isoformat(),
+        "strategy": cfg["strategy_hint"],
+        "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"]},
+        "paper_start_cash": 10000.0,
+    }, indent=2))
     book = Book()
     ticks: list[dict] = []
     latencies: list[float] = []
@@ -108,6 +157,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             errors.append({"i": i, "stage": "jev", **{k: resp[k] for k in resp if k != "error"}})
             tick["jev_error"] = {k: resp[k] for k in resp if k != "error"}
             ticks.append(tick)
+            if i == 1 or i % 12 == 0:
+                _checkpoint(out, market_id=market_id, ticks=ticks, latencies=latencies, errors=errors, book=book)
             time.sleep(interval)
             continue
         answers = resp.get("answers") or {}
@@ -137,8 +188,11 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         ticks.append(tick)
         print(
             f"[{market_id}] tick={i} lat={latency_ms:.0f}ms "
-            f"dir={direction} noul={noul:.2f} pnl={tick['pnl']}"
+            f"dir={direction} noul={noul:.2f} pnl={tick['pnl']}",
+            flush=True,
         )
+        if i == 1 or i % 12 == 0:
+            _checkpoint(out, market_id=market_id, ticks=ticks, latencies=latencies, errors=errors, book=book)
         time.sleep(interval)
 
     try:
