@@ -4,6 +4,20 @@ Paper-trading (dry-run) smokes that feed a **symbol universe** into [Jev](https:
 
 Crypto and stock stay **separate** processes / strategies.
 
+## Design principles (autoresearch / RSI-style)
+
+We treat paper trading like a small **auto-research** lab (Karpathy-style loop), not a single hard-coded strategy.
+
+1. **Parallel strategy wars.** Each tick, the same Jev answers feed many compare ledgers at once (today A–H; the set can grow). Think model wars / factorial waves: try different hypotheses in parallel instead of hill-climbing one book.
+2. **Fixed, comparable campaigns.** A campaign has a clear `ends_ts` / duration, fresh paper books (e.g. $10k), and shared logs so variants are judged under the same wall-clock window.
+3. **Hourly reflect → keep or change.** On a schedule, an agent reviews fills, marks, and decisions: which calls looked right, which looked wrong, and why. Lessons go into `docs/strategy-iteration-log.md` (Observed / Lessons / Decision `CHANGE` | `KEEP` | `OBSERVE`).
+4. **CHANGE restarts a new wave.** Editing strategy rules mid-book contaminates the experiment. On `CHANGE`, archive the old books, start a **new** campaign (new primary/shadows as needed, new `ends_ts`), and keep `logs/raw_decisions/*.jsonl` **append-only** for audit — never truncate history.
+5. **Objective keep/discard.** Promote or discard variants using paper metrics (PnL, fill churn, drawdown, gate pass rates)—our analogue of autoresearch’s fixed metric + time budget. No clear lesson → `KEEP` / `OBSERVE`; clear lesson → `CHANGE` and relaunch.
+6. **Human writes the research org; agents edit the experiment.** Standing instructions (this README, iteration-log format, routines) are the human-owned “program.” Agents may change experiment config / execution overlays and re-run; they do not invent live trading or wipe the decision history.
+7. **Paper only.** Dry-run. No live orders.
+
+Inspiration: [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — propose → run under a fixed budget → evaluate → keep/discard → repeat; scale by running many candidates in parallel.
+
 ## Universes
 
 | Market | Venue | Universe |
