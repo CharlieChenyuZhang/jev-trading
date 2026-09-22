@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal live dashboard for jev-trading paper books."""
+"""Trading-desk live dashboard for jev-trading paper books."""
 from __future__ import annotations
 
 import json
@@ -18,63 +18,148 @@ HTML = r'''<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>jev-trading live</title>
+<title>jev-trading desk</title>
 <style>
-  :root { --bg:#0b1020; --card:#151b2f; --text:#e8eefc; --muted:#9aa7c7; --ok:#3ddc97; --bad:#ff6b6b; --line:#243056; --accent:#6ea8fe; }
+  :root {
+    --bg:#070b14; --panel:#0e1524; --panel2:#121a2c; --line:#1e2a44;
+    --text:#e8eefc; --muted:#8b9bb8; --ok:#22c55e; --bad:#ef4444;
+    --buy:#22c55e; --sell:#ef4444; --hold:#94a3b8; --accent:#60a5fa;
+    --flash-up:rgba(34,197,94,.22); --flash-dn:rgba(239,68,68,.22);
+  }
   * { box-sizing: border-box; }
   body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
-  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; flex-wrap:wrap; align-items:baseline; }
-  header h1 { font-size:18px; margin:0; font-weight:650; }
-  header .meta { color:var(--muted); font-size:13px; }
-  main { padding:16px; display:grid; gap:16px; }
-  .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
-  .card h2 { margin:0 0 8px; font-size:14px; color:var(--accent); font-weight:650; letter-spacing:.02em; text-transform:uppercase; }
-  .kpi { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px; }
-  .kpi:last-child { border-bottom:0; }
-  .kpi span { color:var(--muted); }
-  .kpi b { font-variant-numeric: tabular-nums; }
-  .pos { color:var(--ok); }
-  .neg { color:var(--bad); }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }
-  th { color:var(--muted); font-weight:600; }
-  .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1d2744; color:var(--muted); font-size:12px; }
-  .alive { color:var(--ok); }
-  .dead { color:var(--bad); }
+  header {
+    padding:12px 16px; border-bottom:1px solid var(--line);
+    display:flex; gap:14px; flex-wrap:wrap; align-items:center; justify-content:space-between;
+    background:linear-gradient(180deg, #0c1322, #070b14);
+  }
+  header .left { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:.02em; }
+  header .meta { color:var(--muted); font-size:12px; }
+  .tabs { display:flex; gap:6px; }
+  .tab {
+    border:1px solid var(--line); background:var(--panel); color:var(--muted);
+    border-radius:999px; padding:6px 12px; font-size:12px; cursor:pointer;
+  }
+  .tab.active { color:var(--text); border-color:#33507e; background:#152038; }
+  main { padding:12px; display:grid; gap:12px; }
+  .row { display:grid; gap:12px; grid-template-columns: repeat(4, minmax(0,1fr)); }
+  @media (max-width:1100px) { .row { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  @media (max-width:700px) { .row { grid-template-columns: 1fr; } }
+  .ticker {
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+    transition: background .35s ease;
+  }
+  .ticker.flash-up { background:var(--flash-up); }
+  .ticker.flash-dn { background:var(--flash-dn); }
+  .ticker .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .ticker .value { margin-top:4px; font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1; }
+  .ticker .sub { margin-top:4px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .pos { color:var(--ok); } .neg { color:var(--bad); }
+  .desk { display:grid; gap:12px; grid-template-columns: 1.2fr 1fr; }
+  @media (max-width:1000px) { .desk { grid-template-columns: 1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .card .hd {
+    padding:10px 12px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;
+    background:var(--panel2);
+  }
+  .card .hd h2 { margin:0; font-size:13px; font-weight:650; letter-spacing:.03em; text-transform:uppercase; color:var(--accent); }
+  .card .bd { padding:0; max-height:360px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  .side-buy { color:var(--buy); font-weight:700; }
+  .side-sell { color:var(--sell); font-weight:700; }
+  .side-hold { color:var(--hold); font-weight:700; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1a243a; color:var(--muted); font-size:11px; }
+  .pill.alive { color:var(--ok); border:1px solid rgba(34,197,94,.35); }
+  .pill.dead { color:var(--bad); border:1px solid rgba(239,68,68,.35); }
+  .signal {
+    display:grid; gap:8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    padding:12px;
+  }
+  .signal .cell { background:#0b1220; border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .signal .cell .k { color:var(--muted); font-size:11px; text-transform:uppercase; }
+  .signal .cell .v { margin-top:4px; font-size:16px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .muted { color:var(--muted); }
+  .tiny { font-size:11px; color:var(--muted); }
+  .compare-wrap { padding:8px 10px 12px; }
+  .blink-row { animation: blink 1s ease; }
+  @keyframes blink { from { background: rgba(96,165,250,.18);} to { background: transparent; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>jev-trading paper dashboard</h1>
-  <div class="meta">auto-refresh 2s · dry-run only</div>
-  <div class="meta" id="clock">—</div>
-  <div class="meta" id="campaign">—</div>
+  <div class="left">
+    <h1>JEV 交易台 · 纸面</h1>
+    <div class="meta">实时刷新 1s</div>
+    <div class="meta" id="clock">—</div>
+    <div class="meta" id="campaign">—</div>
+    <span class="pill" id="alivePill">—</span>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-m="crypto">Crypto</button>
+    <button class="tab" data-m="stock">Stock</button>
+  </div>
 </header>
 <main>
-  <div class="grid" id="markets"></div>
+  <div class="row" id="tickers"></div>
   <div class="card">
-    <h2>Variant comparison (same Jev signal)</h2>
-    <div class="meta" style="color:var(--muted);font-size:12px;margin-bottom:8px">primary = v_best · others = uncertain knobs</div>
-    <h3 style="font-size:13px;color:var(--accent);margin:8px 0">Crypto</h3>
-    <table>
-      <thead><tr><th>Book</th><th>Gates / cap</th><th>Fills</th><th>PnL</th><th>Equity</th><th>Why</th></tr></thead>
-      <tbody id="compare_crypto"></tbody>
-    </table>
-    <h3 style="font-size:13px;color:var(--accent);margin:16px 0 8px">Stock</h3>
-    <table>
-      <thead><tr><th>Book</th><th>Gates / cap</th><th>Fills</th><th>PnL</th><th>Equity</th><th>Why</th></tr></thead>
-      <tbody id="compare_stock"></tbody>
-    </table>
+    <div class="hd"><h2>当前信号</h2><span class="tiny" id="lastTs">—</span></div>
+    <div class="signal" id="signal"></div>
+  </div>
+  <div class="desk">
+    <div class="card">
+      <div class="hd"><h2>成交流水</h2><span class="tiny">买 / 卖 · 标的 · 金额</span></div>
+      <div class="bd"><table>
+        <thead><tr><th>时间/Tick</th><th>方向</th><th>标的</th><th>价格</th><th>数量</th><th>金额 $</th><th>Move</th></tr></thead>
+        <tbody id="tape"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="hd"><h2>当前持仓</h2><span class="tiny" id="posCount">—</span></div>
+      <div class="bd"><table>
+        <thead><tr><th>标的</th><th>方向</th><th>数量</th><th>现价</th><th>成本</th><th>市值 $</th><th>浮盈亏</th></tr></thead>
+        <tbody id="positions"></tbody>
+      </table></div>
+    </div>
   </div>
   <div class="card">
-    <h2>Latest answers</h2>
-    <div class="grid" id="answers"></div>
+    <div class="hd"><h2>对照账本</h2><span class="tiny">同一 Jev 信号 · 不同执行规则</span></div>
+    <div class="compare-wrap">
+      <table>
+        <thead><tr><th>账本</th><th>门槛 / 上限</th><th>成交数</th><th>PnL</th><th>权益</th><th>现金</th><th>说明</th></tr></thead>
+        <tbody id="compare"></tbody>
+      </table>
+    </div>
   </div>
 </main>
 <script>
-const fmt = (n, d=2) => (n==null || Number.isNaN(n)) ? '—' : Number(n).toFixed(d);
+let market = 'crypto';
+let prev = { equity: null, pnl: null, cash: null, fillKey: null };
+
+const fmt = (n, d=2) => (n==null || Number.isNaN(Number(n))) ? '—' : Number(n).toFixed(d);
+const money = (n) => (n==null || Number.isNaN(Number(n))) ? '—' : Number(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
 const pnlClass = (n) => (n>0 ? 'pos' : (n<0 ? 'neg' : ''));
+const sideClass = (s) => s==='buy'||s==='long' ? 'side-buy' : (s==='sell'||s==='short' ? 'side-sell' : 'side-hold');
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    market = btn.dataset.m;
+    prev = { equity: null, pnl: null, cash: null, fillKey: null };
+    refresh();
+  });
+});
+
+function flashTicker(el, next, prevVal) {
+  if (prevVal==null || next==null) return;
+  el.classList.remove('flash-up','flash-dn');
+  void el.offsetWidth;
+  if (next > prevVal) el.classList.add('flash-up');
+  else if (next < prevVal) el.classList.add('flash-dn');
+}
 
 function bookRows(live) {
   const rows = [];
@@ -90,84 +175,115 @@ function bookRows(live) {
     why: primary.why || 'primary',
     ...primary,
   });
-  const shadows = live.shadows || {};
-  for (const [id, s] of Object.entries(shadows)) {
+  for (const [id, s] of Object.entries(live.shadows || {})) {
     rows.push({
       id,
-      gates: {
-        noul_min: s.noul_min,
-        conf_min: s.conf_min,
-        max_notional_usd: s.max_notional_usd,
-      },
+      gates: { noul_min: s.noul_min, conf_min: s.conf_min, max_notional_usd: s.max_notional_usd },
       why: s.why || '',
       ...s,
     });
   }
   return rows;
 }
-function renderCompare(tbodyId, live) {
-  const tbody = document.getElementById(tbodyId);
-  tbody.innerHTML = bookRows(live).map(r => `<tr>
-    <td>${r.id}</td>
-    <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}</td>
-    <td>${r.fills ?? 0}</td>
-    <td class="${pnlClass(r.pnl)}">${fmt(r.pnl)}</td>
-    <td>${fmt(r.equity)}</td>
-    <td style="max-width:280px;color:var(--muted);font-size:12px">${r.why || '—'}</td>
-  </tr>`).join('') || '<tr><td colspan="6">waiting for live.json</td></tr>';
-}
 
-function marketCard(name, live, alive) {
-  const dist = live.decision_dist || {};
-  return `<div class="card">
-    <h2>${name} <span class="pill ${alive?'alive':'dead'}">${alive?'alive':'stopped'}</span></h2>
-    <div class="kpi"><span>Ticks</span><b>${live.ticks_so_far ?? '—'}</b></div>
-    <div class="kpi"><span>Latency avg</span><b>${fmt(live.latency_ms?.avg,1)} ms</b></div>
-    <div class="kpi"><span>Decisions</span><b>B ${dist.buy||0} / S ${dist.sell||0} / H ${dist.hold||0}</b></div>
-    <div class="kpi"><span>Last pick</span><b>${live.last_answers?.pick_symbol ?? '—'}</b></div>
-    <div class="kpi"><span>Universe picks</span><b>${Object.entries(live.pick_dist||{}).map(([k,v])=>k+':'+v).slice(0,4).join(' ')||'—'}</b></div>
-    <div class="kpi"><span>Primary fills</span><b>${live.book?.fills ?? 0}</b></div>
-    <div class="kpi"><span>Primary PnL</span><b class="${pnlClass(live.book?.pnl)}">${fmt(live.book?.pnl)}</b></div>
-    <div class="kpi"><span>Errors</span><b>${live.errors ?? 0}</b></div>
-    <div class="kpi"><span>Last update</span><b>${live.last_ts ? new Date(live.last_ts).toLocaleString() : '—'}</b></div>
-  </div>`;
+function render(data) {
+  const m = data.markets[market] || {};
+  const live = m.live || {};
+  const book = live.book || {};
+  const a = live.last_answers || {};
+  const alive = !!m.alive;
+
+  document.getElementById('clock').textContent = new Date(data.now).toLocaleString();
+  const c = data.campaign || {};
+  document.getElementById('campaign').textContent = c.ends_ts
+    ? ('结束 ' + new Date(c.ends_ts).toLocaleString())
+    : '无 campaign';
+  const pill = document.getElementById('alivePill');
+  pill.textContent = alive ? (market + ' 运行中') : (market + ' 已停');
+  pill.className = 'pill ' + (alive ? 'alive' : 'dead');
+  document.getElementById('lastTs').textContent = live.last_ts ? new Date(live.last_ts).toLocaleString() : '—';
+
+  const equity = book.equity, pnl = book.pnl, cash = book.cash, fills = book.fills;
+  document.getElementById('tickers').innerHTML = `
+    <div class="ticker" id="tEquity"><div class="label">权益 Equity</div><div class="value">$${money(equity)}</div><div class="sub">ticks ${live.ticks_so_far ?? 0}</div></div>
+    <div class="ticker" id="tPnl"><div class="label">总盈亏 PnL</div><div class="value ${pnlClass(pnl)}">${pnl>0?'+':''}${money(pnl)}</div><div class="sub">主账本 v_best</div></div>
+    <div class="ticker" id="tCash"><div class="label">现金 Cash</div><div class="value">$${money(cash)}</div><div class="sub">可用购买力</div></div>
+    <div class="ticker" id="tFills"><div class="label">成交笔数</div><div class="value">${fills ?? 0}</div><div class="sub">B ${(live.decision_dist||{}).buy||0} / S ${(live.decision_dist||{}).sell||0} / H ${(live.decision_dist||{}).hold||0}</div></div>
+  `;
+  flashTicker(document.getElementById('tEquity'), equity, prev.equity);
+  flashTicker(document.getElementById('tPnl'), pnl, prev.pnl);
+  flashTicker(document.getElementById('tCash'), cash, prev.cash);
+  prev.equity = equity; prev.pnl = pnl; prev.cash = cash;
+
+  const side = a.direction || '—';
+  document.getElementById('signal').innerHTML = `
+    <div class="cell"><div class="k">标的</div><div class="v">${a.pick_symbol ?? '—'}</div></div>
+    <div class="cell"><div class="k">动作</div><div class="v ${sideClass(side)}">${(side||'—').toUpperCase()}</div></div>
+    <div class="cell"><div class="k">金额 $</div><div class="v">${money(a.size_usd)}</div></div>
+    <div class="cell"><div class="k">Move</div><div class="v">${a.move ?? '—'}</div></div>
+    <div class="cell"><div class="k">Noul</div><div class="v">${fmt(a.should_trade,3)}</div></div>
+    <div class="cell"><div class="k">Dir Tail</div><div class="v">${fmt(a.dir_tail,3)}</div></div>
+    <div class="cell"><div class="k">Toxicity</div><div class="v">${fmt(a.toxicity,2)}</div></div>
+    <div class="cell"><div class="k">Edge</div><div class="v">${fmt(a.edge_score,2)}</div></div>
+  `;
+
+  // tape: prefer book.recent_fills, else derive from API tape
+  const tape = (book.recent_fills && book.recent_fills.length)
+    ? book.recent_fills.slice().reverse()
+    : (m.tape || []);
+  const last = tape[0];
+  const fillKey = last ? `${last.i}-${last.symbol}-${last.side}-${last.notional_usd}` : null;
+  document.getElementById('tape').innerHTML = tape.length ? tape.map((f, idx) => `
+    <tr class="${idx===0 && fillKey && fillKey!==prev.fillKey ? 'blink-row' : ''}">
+      <td>#${f.i ?? '—'}</td>
+      <td class="${sideClass(f.side)}">${(f.side||'').toUpperCase()}</td>
+      <td><b>${f.symbol || '—'}</b></td>
+      <td>${fmt(f.px, f.px!=null && f.px<1 ? 6 : 4)}</td>
+      <td>${fmt(f.qty, f.qty!=null && Math.abs(f.qty)>1000 ? 2 : 6)}</td>
+      <td><b>$${money(f.notional_usd)}</b></td>
+      <td class="muted">${f.move || '—'}</td>
+    </tr>
+  `).join('') : `<tr><td colspan="7" class="muted">暂无成交</td></tr>`;
+  prev.fillKey = fillKey;
+
+  const pos = book.positions_detail || [];
+  document.getElementById('posCount').textContent = pos.length ? (pos.length + ' 个标的') : '空仓';
+  document.getElementById('positions').innerHTML = pos.length ? pos.map(p => `
+    <tr>
+      <td><b>${p.symbol}</b></td>
+      <td class="${sideClass(p.side)}">${(p.side||'').toUpperCase()}</td>
+      <td>${fmt(p.qty, Math.abs(p.qty)>1000 ? 2 : 6)}</td>
+      <td>${fmt(p.mid, p.mid!=null && p.mid<1 ? 6 : 4)}</td>
+      <td>${fmt(p.avg_entry, p.avg_entry!=null && p.avg_entry<1 ? 6 : 4)}</td>
+      <td>$${money(p.notional_usd)}</td>
+      <td class="${pnlClass(p.unrealized_pnl)}">${p.unrealized_pnl>0?'+':''}${money(p.unrealized_pnl)}</td>
+    </tr>
+  `).join('') : `<tr><td colspan="7" class="muted">当前空仓</td></tr>`;
+
+  document.getElementById('compare').innerHTML = bookRows(live).map(r => `
+    <tr>
+      <td><b>${r.id}</b></td>
+      <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}</td>
+      <td>${r.fills ?? 0}</td>
+      <td class="${pnlClass(r.pnl)}">${r.pnl>0?'+':''}${money(r.pnl)}</td>
+      <td>$${money(r.equity)}</td>
+      <td>$${money(r.cash)}</td>
+      <td class="tiny" style="white-space:normal;max-width:320px">${r.why || '—'}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="7" class="muted">等待 live.json</td></tr>`;
 }
 
 async function refresh() {
-  const res = await fetch('/api/snapshot');
-  const data = await res.json();
-  document.getElementById('clock').textContent = 'now ' + new Date(data.now).toLocaleString();
-  const c = data.campaign || {};
-  document.getElementById('campaign').textContent = c.ends_ts
-    ? `ends ${new Date(c.ends_ts).toLocaleString()}`
-    : 'no campaign meta';
-  const markets = document.getElementById('markets');
-  markets.innerHTML = '';
-  for (const m of ['crypto','stock']) {
-    const live = data.markets[m]?.live || {};
-    const alive = !!data.markets[m]?.alive;
-    markets.insertAdjacentHTML('beforeend', marketCard(m, live, alive));
+  try {
+    const res = await fetch('/api/snapshot');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    document.getElementById('clock').textContent = '刷新失败';
   }
-  renderCompare('compare_crypto', data.markets.crypto?.live || {});
-  renderCompare('compare_stock', data.markets.stock?.live || {});
-
-  const answers = document.getElementById('answers');
-  answers.innerHTML = ['crypto','stock'].map(m => {
-    const a = data.markets[m]?.live?.last_answers || {};
-    return `<div class="card"><h2>${m} last</h2>
-      <div class="kpi"><span>pick</span><b>${a.pick_symbol ?? '—'}</b></div>
-      <div class="kpi"><span>move</span><b>${a.move ?? '—'}</b></div>
-      <div class="kpi"><span>direction</span><b>${a.direction ?? '—'}</b></div>
-      <div class="kpi"><span>noul</span><b>${fmt(a.should_trade,3)}</b></div>
-      <div class="kpi"><span>dir_tail</span><b>${fmt(a.dir_tail,3)}</b></div>
-      <div class="kpi"><span>toxicity</span><b>${fmt(a.toxicity,2)}</b></div>
-      <div class="kpi"><span>size_usd</span><b>${fmt(a.size_usd,0)}</b></div>
-      <div class="kpi"><span>edge</span><b>${fmt(a.edge_score,2)}</b></div>
-    </div>`;
-  }).join('');
 }
 refresh();
-setInterval(refresh, 2000);
+setInterval(refresh, 1000);
 </script>
 </body>
 </html>
@@ -191,6 +307,30 @@ def process_alive(pid: int | None) -> bool:
         return False
 
 
+def tape_from_recent(path: Path) -> list[dict]:
+    recent = read_json(path) or []
+    out = []
+    for t in recent:
+        f = t.get("fill")
+        if not f:
+            continue
+        out.append(
+            {
+                "symbol": f.get("symbol") or t.get("selected_symbol"),
+                "side": f.get("side"),
+                "px": f.get("px"),
+                "qty": f.get("qty"),
+                "notional_usd": f.get("notional_usd"),
+                "i": f.get("i") or t.get("i"),
+                "move": f.get("move") or (t.get("answers") or {}).get("move"),
+                "ts": t.get("ts"),
+                "book": f.get("book"),
+            }
+        )
+    out.reverse()  # newest first
+    return out[:40]
+
+
 def snapshot() -> dict:
     camp = read_json(ROOT / "campaign.json") or {}
     pids = read_json(ROOT / "campaign_pids.json") or {}
@@ -200,10 +340,14 @@ def snapshot() -> dict:
         meta = read_json(ROOT / m / "run_meta.json") or {}
         if meta.get("thresholds") and "thresholds" not in live:
             live["thresholds"] = meta.get("thresholds")
+        # fallback tape if checkpoint not yet enriched
+        book = live.get("book") or {}
+        tape = book.get("recent_fills") or tape_from_recent(ROOT / m / "recent_ticks.json")
         markets[m] = {
             "live": live,
             "alive": process_alive(pids.get(m)),
             "pid": pids.get(m),
+            "tape": tape,
         }
     return {
         "now": datetime.now(timezone.utc).isoformat(),

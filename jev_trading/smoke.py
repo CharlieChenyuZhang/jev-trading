@@ -393,12 +393,49 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
 
 
 def _portfolio_snap(book: Portfolio, mids: dict[str, float]) -> dict[str, Any]:
+    positions_detail = []
+    for sym, qty in book.positions.items():
+        mid = float(mids.get(sym, 0) or 0)
+        avg = float(book.avg_entry.get(sym, mid) or 0)
+        notional = qty * mid
+        u_pnl = qty * (mid - avg) if avg else 0.0
+        positions_detail.append(
+            {
+                "symbol": sym,
+                "qty": round(qty, 8),
+                "mid": round(mid, 6) if mid else None,
+                "avg_entry": round(avg, 6) if avg else None,
+                "notional_usd": round(notional, 2),
+                "unrealized_pnl": round(u_pnl, 2),
+                "side": "long" if qty > 0 else "short",
+            }
+        )
+    positions_detail.sort(key=lambda x: abs(x.get("notional_usd") or 0), reverse=True)
+    recent_fills = []
+    for f in book.fills[-40:]:
+        recent_fills.append(
+            {
+                "symbol": f.get("symbol"),
+                "side": f.get("side"),
+                "px": f.get("px"),
+                "qty": f.get("qty"),
+                "notional_usd": f.get("notional_usd"),
+                "i": f.get("i"),
+                "move": f.get("move"),
+                "noul": f.get("noul"),
+                "dir_tail": f.get("dir_tail"),
+                "book": f.get("book"),
+            }
+        )
     return {
         "equity": round(book.equity(mids), 2),
         "pnl": round(book.mark_pnl(mids), 2),
         "fills": len(book.fills),
         "cash": round(book.cash, 2),
         "positions": {k: round(v, 8) for k, v in book.positions.items()},
+        "positions_detail": positions_detail,
+        "recent_fills": recent_fills,
+        "last_fill": recent_fills[-1] if recent_fills else None,
     }
 
 
