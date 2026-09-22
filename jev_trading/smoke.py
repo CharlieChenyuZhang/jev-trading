@@ -22,6 +22,12 @@ MARKETS: dict[str, dict[str, Any]] = {
         "conf_min": 0.55,
         "default_duration_s": 45,
         "interval_s": 2.5,
+        # Parallel paper books for parameter comparison (same signals, different gates)
+        "shadows": [
+            {"id": "shadow_035_025", "noul_min": 0.35, "conf_min": 0.25},
+            {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
+            {"id": "shadow_030_020", "noul_min": 0.30, "conf_min": 0.20},
+        ],
     },
     "stock": {
         "fetch": fetch_stock_aapl,
@@ -30,6 +36,7 @@ MARKETS: dict[str, dict[str, Any]] = {
         "conf_min": 0.55,
         "default_duration_s": 45,
         "interval_s": 2.5,
+        "shadows": [],  # overnight mostly hold; add shadows later in RTH if needed
     },
 }
 
@@ -68,7 +75,29 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def _checkpoint(out: Path, *, market_id: str, ticks: list, latencies: list, errors: list, book: Book, extra: dict | None = None) -> None:
+def _book_snap(book: Book, mid: float | None = None) -> dict[str, Any]:
+    m = mid if mid is not None else 0.0
+    return {
+        "equity": round(book.equity(m), 2) if mid is not None else round(book.cash, 2),
+        "pnl": round(book.mark_pnl(m), 2) if mid is not None else round(book.realized_pnl, 2),
+        "fills": len(book.fills),
+        "position": book.position,
+        "cash": round(book.cash, 2),
+    }
+
+
+def _checkpoint(
+    out: Path,
+    *,
+    market_id: str,
+    ticks: list,
+    latencies: list,
+    errors: list,
+    book: Book,
+    shadow_books: dict[str, Book] | None = None,
+    shadow_cfgs: list[dict] | None = None,
+    extra: dict | None = None,
+) -> None:
     dist = {"buy": 0, "sell": 0, "hold": 0, "other": 0}
     for x in ticks:
         d = ((x.get("answers") or {}).get("direction"))
@@ -76,6 +105,7 @@ def _checkpoint(out: Path, *, market_id: str, ticks: list, latencies: list, erro
             dist[d] += 1
         else:
             dist["other"] += 1
+    mid = ticks[-1].get("mid") if ticks else None
     live = {
         "market": market_id,
         "ticks_so_far": len(ticks),
@@ -93,11 +123,21 @@ def _checkpoint(out: Path, *, market_id: str, ticks: list, latencies: list, erro
             "fills": len(book.fills),
             "position": book.position,
             "cash": book.cash,
+            "label": "primary",
         },
         "decision_dist": dist,
         "errors": len(errors),
         "last_answers": (ticks[-1].get("answers") if ticks else None),
+        "shadows": {},
     }
+    if shadow_books:
+        cfg_by_id = {c["id"]: c for c in (shadow_cfgs or [])}
+        for sid, sb in shadow_books.items():
+            snap = _book_snap(sb, float(mid) if mid is not None else None)
+            cfg = cfg_by_id.get(sid) or {}
+            snap["noul_min"] = cfg.get("noul_min")
+            snap["conf_min"] = cfg.get("conf_min")
+            live["shadows"][sid] = snap
     if extra:
         live.update(extra)
     (out / "live.json").write_text(json.dumps(live, indent=2))
@@ -122,6 +162,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 
     print(f"SMOKE [{market_id}] key_ok len={len(api_key)} duration={duration}s", flush=True)
     started = datetime.now(timezone.utc).isoformat()
+    shadow_cfgs = list(cfg.get("shadows") or [])
     (out / "run_meta.json").write_text(json.dumps({
         "market": market_id,
         "started_ts": started,
@@ -129,10 +170,12 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         "interval_s": interval,
         "ends_ts_approx": datetime.fromtimestamp(time.time() + duration, tz=timezone.utc).isoformat(),
         "strategy": cfg["strategy_hint"],
-        "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"]},
+        "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"], "label": "primary"},
+        "shadows": shadow_cfgs,
         "paper_start_cash": 10000.0,
     }, indent=2))
     book = Book()
+    shadow_books: dict[str, Book] = {s["id"]: Book() for s in shadow_cfgs}
     ticks: list[dict] = []
     latencies: list[float] = []
     errors: list[dict] = []
@@ -158,7 +201,16 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             tick["jev_error"] = {k: resp[k] for k in resp if k != "error"}
             ticks.append(tick)
             if i == 1 or i % 12 == 0:
-                _checkpoint(out, market_id=market_id, ticks=ticks, latencies=latencies, errors=errors, book=book)
+                _checkpoint(
+                    out,
+                    market_id=market_id,
+                    ticks=ticks,
+                    latencies=latencies,
+                    errors=errors,
+                    book=book,
+                    shadow_books=shadow_books,
+                    shadow_cfgs=shadow_cfgs,
+                )
             time.sleep(interval)
             continue
         answers = resp.get("answers") or {}
@@ -180,19 +232,49 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 mid=snap["mid"],
                 bid=snap["bid"],
                 ask=snap["ask"],
-                meta={"i": i, "noul": noul, "conf": conf, "edge": parsed.get("edge_score")},
+                meta={"i": i, "noul": noul, "conf": conf, "edge": parsed.get("edge_score"), "book": "primary"},
             )
+        shadow_fills: dict[str, Any] = {}
+        if direction in ("buy", "sell"):
+            for scfg in shadow_cfgs:
+                if noul >= scfg["noul_min"] and conf >= scfg["conf_min"]:
+                    sid = scfg["id"]
+                    shadow_fills[sid] = shadow_books[sid].maybe_trade(
+                        side=direction,
+                        mid=snap["mid"],
+                        bid=snap["bid"],
+                        ask=snap["ask"],
+                        meta={"i": i, "noul": noul, "conf": conf, "edge": parsed.get("edge_score"), "book": sid},
+                    )
         tick["fill"] = fill
+        tick["shadow_fills"] = shadow_fills
         tick["equity"] = round(book.equity(snap["mid"]), 2)
         tick["pnl"] = round(book.mark_pnl(snap["mid"]), 2)
+        tick["shadow_pnl"] = {
+            sid: round(sb.mark_pnl(snap["mid"]), 2) for sid, sb in shadow_books.items()
+        }
         ticks.append(tick)
+        shadow_bits = " ".join(
+            f"{sid}={tick['shadow_pnl'][sid]:+.2f}/{len(shadow_books[sid].fills)}"
+            for sid in shadow_books
+        )
         print(
             f"[{market_id}] tick={i} lat={latency_ms:.0f}ms "
-            f"dir={direction} noul={noul:.2f} pnl={tick['pnl']}",
+            f"dir={direction} noul={noul:.2f} primary_pnl={tick['pnl']}"
+            + (f" | {shadow_bits}" if shadow_bits else ""),
             flush=True,
         )
         if i == 1 or i % 12 == 0:
-            _checkpoint(out, market_id=market_id, ticks=ticks, latencies=latencies, errors=errors, book=book)
+            _checkpoint(
+                out,
+                market_id=market_id,
+                ticks=ticks,
+                latencies=latencies,
+                errors=errors,
+                book=book,
+                shadow_books=shadow_books,
+                shadow_cfgs=shadow_cfgs,
+            )
         time.sleep(interval)
 
     try:
@@ -230,10 +312,25 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             "equity": book.equity(final_mid),
             "pnl": book.mark_pnl(final_mid),
             "fills": len(book.fills),
+            "label": "primary",
+            "thresholds": {"noul_min": cfg["noul_min"], "conf_min": cfg["conf_min"]},
+        },
+        "shadow_books": {
+            sid: {
+                **_book_snap(sb, final_mid),
+                "noul_min": next(s["noul_min"] for s in shadow_cfgs if s["id"] == sid),
+                "conf_min": next(s["conf_min"] for s in shadow_cfgs if s["id"] == sid),
+            }
+            for sid, sb in shadow_books.items()
         },
         "decision_dist": dist,
     }
     (out / "results.json").write_text(json.dumps(results, indent=2))
+    shadow_lines = "\n".join(
+        f"- Shadow `{sid}` (noul>={sc['noul_min']}, conf>={sc['conf_min']}): "
+        f"fills={results['shadow_books'][sid]['fills']} / pnl={results['shadow_books'][sid]['pnl']:.2f}"
+        for sid, sc in ((s['id'], s) for s in shadow_cfgs)
+    ) or "- Shadows: none"
     summary = f"""# Smoke ({market_id})
 
 - Mode: paper only
@@ -242,7 +339,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 - Ticks: {len(ticks)}
 - Latency ms: min={results['latency_ms']['min']} avg={results['latency_ms']['avg']} max={results['latency_ms']['max']}
 - Decisions: {dist}
-- Fills / PnL: {results['book']['fills']} / {results['book']['pnl']:.2f}
+- Primary (noul>={cfg['noul_min']}, conf>={cfg['conf_min']}): fills={results['book']['fills']} / pnl={results['book']['pnl']:.2f}
+{shadow_lines}
 - Errors: {len(errors)}
 """
     (out / "SUMMARY.md").write_text(summary)

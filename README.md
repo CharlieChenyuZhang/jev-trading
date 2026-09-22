@@ -37,6 +37,19 @@ Each smoke writes under `out/<market>/`:
 
 These paths are gitignored.
 
+## Parameter comparison (shadow books)
+
+Crypto runs a **primary** book (strict gates) plus parallel **shadow** books on the same Jev signals:
+
+| Book | noul | confidence |
+| --- | --- | --- |
+| primary | ≥ 0.60 | ≥ 0.55 |
+| shadow_035_025 | ≥ 0.35 | ≥ 0.25 |
+| shadow_040_030 | ≥ 0.40 | ≥ 0.30 |
+| shadow_030_020 | ≥ 0.30 | ≥ 0.20 |
+
+Live comparison is in `out/crypto/live.json` under `book` + `shadows`.
+
 ## Safety
 
 Dry-run only. No live orders.
