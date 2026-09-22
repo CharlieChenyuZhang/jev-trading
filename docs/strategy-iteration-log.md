@@ -70,3 +70,22 @@ Implement and observe:
 ### Next observe window
 - Fresh paper books; hourly reflect loop on.
 
+
+
+## 2026-09-22 10:09 PT · iteration 1c · CHANGE (raw decision logging)
+
+### Observed
+- User requested durable raw logs of every investment decision (strategy + model outputs).
+
+### Lessons learned
+- Tick summaries in results.json are not enough for later audit; need append-only JSONL with `jev_raw_answers`.
+
+### Strategy decision · CHANGE
+- Append each tick to `out/{market}/decisions.jsonl` and `logs/raw_decisions/{market}.jsonl`.
+
+### Code / config changes (if any)
+- `jev_trading/smoke.py` `append_decision_log`; README under `logs/raw_decisions/`.
+
+### Next observe window
+- Continue v2 observe; hourly iterate routine can cite these raw logs.
+

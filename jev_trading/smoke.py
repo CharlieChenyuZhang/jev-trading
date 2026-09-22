@@ -469,6 +469,20 @@ def _portfolio_snap(book: Portfolio, mids: dict[str, float]) -> dict[str, Any]:
     }
 
 
+
+def append_decision_log(out: Path, record: dict[str, Any]) -> None:
+    """Append one raw investment decision (JSONL). Survives restarts; never rewrite."""
+    out.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with (out / "decisions.jsonl").open("a", encoding="utf-8") as f:
+        f.write(line)
+    archive = Path(__file__).resolve().parents[1] / "logs" / "raw_decisions"
+    archive.mkdir(parents=True, exist_ok=True)
+    market = str(record.get("market") or out.name)
+    with (archive / f"{market}.jsonl").open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
 def _checkpoint(
     out: Path,
     *,
@@ -655,6 +669,19 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             errors.append({"i": i, "stage": "jev", **{k: resp[k] for k in resp if k != "error"}})
             tick["jev_error"] = {k: resp[k] for k in resp if k != "error"}
             ticks.append(tick)
+            append_decision_log(
+                out,
+                {
+                    "ts": tick.get("ts"),
+                    "market": market_id,
+                    "tick": i,
+                    "experiment": EXPERIMENT.get("name"),
+                    "strategy_primary": (PRIMARY or {}).get("id"),
+                    "error": True,
+                    "jev_error": tick.get("jev_error"),
+                    "latency_ms": tick.get("latency_ms"),
+                },
+            )
             if i == 1 or i % 6 == 0:
                 _checkpoint(
                     out,
@@ -689,7 +716,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         sym_cap = float(cfg.get("max_symbol_notional_usd") or 1500)
 
         primary_variant = {
-            "id": "v_best",
+            "id": (PRIMARY or {}).get("id") or "v2_best",
             "noul_min": cfg["noul_min"],
             "conf_min": cfg["conf_min"],
             "toxicity_max": cfg.get("toxicity_max", 2.0),
@@ -806,6 +833,46 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         tick["pnl"] = round(book.mark_pnl(mids), 2)
         tick["shadow_pnl"] = {sid: round(sb.mark_pnl(mids), 2) for sid, sb in shadow_books.items()}
         ticks.append(tick)
+        append_decision_log(
+            out,
+            {
+                "ts": tick.get("ts"),
+                "market": market_id,
+                "tick": i,
+                "experiment": EXPERIMENT.get("name"),
+                "strategy_primary": primary_variant.get("id"),
+                "strategy_hint": cfg.get("strategy_hint"),
+                "gates": {
+                    "noul_min": primary_variant.get("noul_min"),
+                    "dir_tail_min": primary_variant.get("conf_min"),
+                    "toxicity_max": primary_variant.get("toxicity_max"),
+                    "max_notional_usd": primary_variant.get("max_notional_usd"),
+                    "allowed_moves": primary_variant.get("allowed_moves"),
+                    "size_mode": primary_variant.get("size_mode"),
+                    "max_open_symbols": cfg.get("max_open_symbols"),
+                    "rth_only": cfg.get("rth_only"),
+                },
+                "candidates": tick.get("candidates"),
+                "return_buckets_bps": tick.get("return_buckets_bps"),
+                "model": tick.get("model"),
+                "latency_ms": tick.get("latency_ms"),
+                "usage": tick.get("usage"),
+                "jev_raw_answers": answers,
+                "jev_parsed": parsed,
+                "execution": {
+                    "selected_symbol": tick.get("selected_symbol"),
+                    "session_ok": tick.get("session_ok"),
+                    "open_symbols": tick.get("open_symbols"),
+                    "size_usd_primary": size_usd,
+                    "variant_sizes": tick.get("variant_sizes"),
+                    "primary_fill": fill,
+                    "shadow_fills": {k: (v if v is None or isinstance(v, dict) else str(v)) for k, v in shadow_fills.items()},
+                    "equity": tick.get("equity"),
+                    "pnl": tick.get("pnl"),
+                    "shadow_pnl": tick.get("shadow_pnl"),
+                },
+            },
+        )
 
         shadow_bits = " ".join(
             f"{sid}={tick['shadow_pnl'][sid]:+.2f}/{len(shadow_books[sid].fills)}" for sid in shadow_books
