@@ -43,7 +43,7 @@ def http_json(url: str, *, method: str = "GET", headers: dict | None = None, bod
 def fetch_crypto() -> dict[str, Any]:
     # Coinbase public (Binance often returns 451 from some regions)
     ticker = http_json("https://api.exchange.coinbase.com/products/BTC-USD/ticker")
-    book = http_json("https://api.exchange.coinbase.com/products/BTC-USD/book?level=2")
+    book = http_json("https://api.exchange.coinbase.com/products/BTC-USD/book?level=1")
     trades = http_json("https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=20")
     bid = float(ticker["bid"])
     ask = float(ticker["ask"])
