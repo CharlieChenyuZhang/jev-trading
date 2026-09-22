@@ -243,3 +243,31 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~13:08–13:40 PT; campaign end ~14:06 PT. If ends_ts passes and both smokes exit → final summary + delete routine `jev-trading-hourly-strategy-iterate`.
+
+
+## 2026-09-22 13:33 PT · iteration 7 · KEEP/OBSERVE (A–H ~2h; G still ahead)
+
+### Observed
+- Campaign `A_to_H_observe` active; ends_ts `2026-09-22T21:06:00Z` (~14:06 PT); ~0.5h remaining. PIDs crypto/stock/dashboard all alive (~2h05m uptime); dashboard http://127.0.0.1:8787 returns 200. No restarts this hour.
+- **Crypto primary `exp_A_short` (~726 ticks / ~2h05m since A–H restart):** equity ≈ **$9933** / PnL ≈ **−$67**; **107 fills**; **8/8 open** (at cap): SUKU/DRIFT/ALCX longs + SXT/AURORA/LCX/XRP/NEAR shorts. All `mark_stale=false`; nonzero mids (incl. sub-cent alts). Decision mix ~184 buy / 148 sell / 394 hold. Pick concentration: **DRIFT / AURORA / ALCX / SXT / SUKU**. Regime mix **chop ~66% / trend ~34%** (483 vs 246 AH JSONL ticks); trade_imbalance ≈ 0. Horizons disagree ~47% of ticks.
+- **Crypto shadows:** **G ≈ +$63 / 112 fills / 8 open** (still best; held lead into trend hours). **B ≈ +$31 / 22 fills / 8 open** (recovered from earlier red; `variant_pass` ~6%). **C ≈ +$3 / 13 fills / 8 open** (first sustained C fills; pass ~2%). D still **0 fills / flat $10k**. E ≈ **−$98 / 272 fills** (exit overlay still overtrades; worst PnL). F ≈ A (−$67 / 107). H ≈ **−$92 / 68 fills** (quieter but worse than A). `variant_pass` rates ~A/E/F/G 40%, H 33%, B 6%, C 2%, D 0%.
+- **Stock (~72 ticks; live.json last_ts can lag JSONL by several minutes while Yahoo polls):** primary ≈ **+$2.34 / 10 fills / 8 open** (META/MAR/AAPL/COIN/GOOGL/DELL shorts, INTC long, TSLA dust). B ≈ +$2.09 / 9; C ≈ +$1.93 / 6; D flat 0; E ≈ −$0.14 / 23; F/H ≈ A; G ≈ **−$1.75 / 10** (slightly behind A on stock). Nearly all `session_ok` path under RTH; zero stale/zero mids on open detail. Sample still small vs crypto.
+- Accounting vs trading: crypto drawdown remains alt mark + adverse selection on thin names (not mid=0 wipeouts). E’s fill explosion is real exit churn. Stock near-flat PnL looks like real small marks. Live lag is operational freshness, not invented PnL.
+
+### Lessons learned
+1. **Good:** G’s chop-fade lead persisted across ~2h and into a non-trivial trend share (~1/3 of ticks) — strongest A–H signal so far on crypto (~+$63 vs A −$67).
+2. **Good:** B and C finally have meaningful crypto fill samples; agree gates are no longer totally silent. D remains correctly quiet with imbalance ≈ 0.
+3. **Good:** v2 guards hold — primary open capped at 8; stock RTH intact; zero `mark_stale` / zero mid on open crypto/stock detail rows.
+4. **Bad / reinforced:** **E exit overlay overtrades** (272 vs A’s 107 fills) and stays worst PnL — do not promote E; time/TP/trail likely recycling thin alts.
+5. **Bad / watch:** primary still **clusters thin alts** (DRIFT/AURORA/SXT/SUKU) at the open-name ceiling; large unit qtys on sub-cent names amplify mark noise. H’s markout veto cut activity but did not improve PnL vs A this window.
+6. **Caveat:** G leads crypto but is slightly behind A on the small stock sample — not enough to flip primary with ~30m wall time left. Prefer KEEP through campaign end; consider G-primary in a fresh post-window campaign if the lead survives the final half-hour.
+
+### Strategy decision · KEEP/OBSERVE
+- No strategy/code change this hour. Keep primary A + shadows B–H through remaining wall time (~14:06 PT).
+- Final half-hour watch: (a) whether G stays ahead through end, (b) E churn stays net-negative, (c) D ever fires if imbalance moves, (d) stock live.json freshness.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~14:08 PT may land after ends_ts — if ends_ts passed and both smokes exit → final summary + delete routine `jev-trading-hourly-strategy-iterate`.
