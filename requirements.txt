@@ -1,0 +1,4 @@
+# Runtime uses stdlib urllib only.
+# Optional:
+# requests>=2.31
+# typesafe-sdk>=0.1
