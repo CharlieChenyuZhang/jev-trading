@@ -30,7 +30,7 @@ MARKETS: dict[str, dict[str, Any]] = {
         "noul_min": 0.60,
         "conf_min": 0.55,
         "default_duration_s": 45,
-        "interval_s": 3.0,  # slightly slower: fetch N products each tick
+        "interval_s": 8.0,  # large Coinbase basket (lite parallel)
         "shadows": [
             {"id": "shadow_035_025", "noul_min": 0.35, "conf_min": 0.25},
             {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
@@ -44,7 +44,7 @@ MARKETS: dict[str, dict[str, Any]] = {
         "noul_min": 0.65,
         "conf_min": 0.55,
         "default_duration_s": 45,
-        "interval_s": 12.0,  # Yahoo basket — keep polite
+        "interval_s": 30.0,  # large Yahoo basket — keep polite
         "shadows": [
             {"id": "shadow_035_025", "noul_min": 0.35, "conf_min": 0.25},
             {"id": "shadow_040_030", "noul_min": 0.40, "conf_min": 0.30},
@@ -56,26 +56,29 @@ MARKETS: dict[str, dict[str, Any]] = {
 
 def build_state(market_id: str, snaps: dict[str, dict], strategy_hint: str, universe: list[str]) -> str:
     compact = []
+    err_n = 0
     for sym in universe:
         s = snaps.get(sym) or {}
         if s.get("error"):
-            compact.append({"symbol": sym, "error": s["error"]})
-        else:
-            compact.append(
-                {
-                    "symbol": sym,
-                    "mid": s.get("mid"),
-                    "spread_bps": s.get("spread_bps"),
-                    "ret_short_bps": s.get("ret_short_bps"),
-                    "trade_imbalance": s.get("trade_imbalance"),
-                }
-            )
+            err_n += 1
+            continue
+        compact.append(
+            {
+                "symbol": sym,
+                "mid": s.get("mid"),
+                "spread_bps": s.get("spread_bps"),
+                "ret_short_bps": s.get("ret_short_bps"),
+                "trade_imbalance": s.get("trade_imbalance"),
+            }
+        )
     return json.dumps(
         {
             "mode": "paper_trading_dry_run_universe",
             "market": market_id,
             "strategy": strategy_hint,
-            "universe": universe,
+            "universe_size": len(universe),
+            "quoted": len(compact),
+            "fetch_errors": err_n,
             "ts_utc": datetime.now(timezone.utc).isoformat(),
             "horizon_sec": 5,
             "snapshots": compact,
@@ -411,7 +414,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
     summary = f"""# Smoke ({market_id})
 
 - Mode: paper only · Jev picks symbol from universe
-- Universe: {', '.join(universe)}
+- Universe size: {len(universe)} (cap 254 for Jev choice incl. none)
 - Strategy: {cfg['strategy_hint']}
 - Duration: ~{duration}s / interval ~{interval}s
 - Ticks: {len(ticks)}
