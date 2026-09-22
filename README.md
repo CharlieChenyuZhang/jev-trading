@@ -50,6 +50,15 @@ Crypto runs a **primary** book (strict gates) plus parallel **shadow** books on 
 
 Live comparison is in `out/crypto/live.json` under `book` + `shadows`.
 
+## Live dashboard
+
+```bash
+python dashboard/server.py
+# open http://127.0.0.1:8787
+```
+
+Reads `out/*/live.json` every 2s (primary + shadow books).
+
 ## Safety
 
 Dry-run only. No live orders.
