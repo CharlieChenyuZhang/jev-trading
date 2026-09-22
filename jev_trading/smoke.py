@@ -31,6 +31,8 @@ MARKETS: dict[str, dict[str, Any]] = {
         # Open thresholds calibrated to observed Jev noul/dir tails (FMZ: open vs wait)
         "noul_min": 0.38,
         "conf_min": 0.35,  # uses directional tail P(buy)|P(sell), not concentration
+        "toxicity_max": 2.2,  # skip when adverse-selection score too high
+        "max_notional_usd": 500.0,
         "candidate_k": 32,
         "default_duration_s": 45,
         "interval_s": 8.0,
@@ -46,6 +48,8 @@ MARKETS: dict[str, dict[str, Any]] = {
         "strategy_hint": "US equity multi-name short-horizon — session-aware move buckets",
         "noul_min": 0.40,
         "conf_min": 0.35,
+        "toxicity_max": 2.2,
+        "max_notional_usd": 500.0,
         "candidate_k": 24,
         "default_duration_s": 45,
         "interval_s": 25.0,
@@ -119,35 +123,46 @@ def resolve_size_usd(
     size_choice: float,
     size_probs: dict | None,
     edge_score: float | None,
+    max_notional_usd: float = 500.0,
 ) -> float:
-    """Enforce absolute size: buy/sell must be non-zero; hold/none → 0."""
+    """Absolute size from Jev; buy/sell never 0; capped; no $5k lottery from weak mass."""
     if not pick or pick == "none" or direction in (None, "hold"):
         return 0.0
+
+    def _edge_map() -> float:
+        e = float(edge_score or 0)
+        mapped = 50.0
+        for thr, usd in SIZE_EDGE_MAP:
+            if e <= thr:
+                mapped = usd
+                break
+        return mapped
+
+    chosen = 0.0
     if size_choice >= 1:
-        return float(size_choice)
-    # Jev often mass-votes size=0 while still leaning buy/sell — take best non-zero mass
-    probs = size_probs or {}
-    best_nz = 0.0
-    best_p = -1.0
-    for k, p in probs.items():
-        try:
-            usd = float(k)
-            pr = float(p)
-        except (TypeError, ValueError):
-            continue
-        if usd >= 1 and pr > best_p:
-            best_p = pr
-            best_nz = usd
-    if best_nz >= 1 and best_p >= 0.08:
-        return best_nz
-    # last resort: map edge score → absolute USD (still from Jev edge)
-    e = float(edge_score or 0)
-    mapped = 50.0
-    for thr, usd in SIZE_EDGE_MAP:
-        if e <= thr:
-            mapped = usd
-            break
-    return mapped
+        chosen = float(size_choice)
+    else:
+        # Prefer edge-mapped size when Jev's explicit choice is 0 (common inconsistency)
+        # Only use size_probs if a modest bucket clearly leads among non-zero.
+        probs = size_probs or {}
+        modest = []
+        for k, pr in probs.items():
+            try:
+                usd = float(k)
+                p = float(pr)
+            except (TypeError, ValueError):
+                continue
+            if 50 <= usd <= max_notional_usd:
+                modest.append((p, usd))
+        if modest:
+            modest.sort(reverse=True)
+            if modest[0][0] >= 0.15:
+                chosen = modest[0][1]
+        if chosen < 1:
+            chosen = _edge_map()
+    if chosen < 1:
+        chosen = 50.0
+    return float(min(chosen, max_notional_usd))
 
 
 def dir_tail(direction: str | None, dir_probs: dict | None) -> float:
@@ -225,14 +240,12 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
     pick = p.get("choice")
     direction = d.get("choice")
     move = m.get("choice")
-    # Align direction with move bucket when inconsistent
+    # Move bucket is the primary forecast; align action to it (FMZ-style).
     if move in MOVE_TO_DIR:
         mapped = MOVE_TO_DIR[move]
-        if direction in (None, "hold") and mapped != "hold":
-            direction = mapped
-        elif direction in ("buy", "sell") and mapped == "hold":
-            pass  # keep explicit direction
-        elif direction in ("buy", "sell") and mapped in ("buy", "sell") and direction != mapped:
+        if mapped == "hold":
+            direction = "hold"
+        else:
             direction = mapped
 
     edge_score = e.get("score")
@@ -243,6 +256,7 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
         size_choice=size_choice,
         size_probs=size_probs if isinstance(size_probs, dict) else None,
         edge_score=float(edge_score) if edge_score is not None else None,
+        max_notional_usd=500.0,
     )
 
     dir_probs = d.get("probabilities") if isinstance(d.get("probabilities"), dict) else {}
@@ -373,6 +387,8 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                 "thresholds": {
                     "noul_min": cfg["noul_min"],
                     "dir_tail_min": cfg["conf_min"],
+                    "toxicity_max": cfg.get("toxicity_max"),
+                    "max_notional_usd": cfg.get("max_notional_usd"),
                     "label": "primary",
                 },
                 "shadows": shadow_cfgs,
@@ -462,10 +478,20 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
 
         picked = parsed.get("pick_symbol")
         direction = parsed.get("direction")
+        move = parsed.get("move")
         noul = float(parsed.get("should_trade") or 0)
         conf = float(parsed.get("dir_tail") or 0)  # directional tail, not concentration
+        toxicity = float(parsed.get("toxicity") or 0)
+        max_notion = float(cfg.get("max_notional_usd") or 500)
+        tox_max = float(cfg.get("toxicity_max") or 2.2)
+        # Re-clamp with market cap; skip flat / toxic
         size_usd = float(parsed.get("size_usd") or 0)
+        size_usd = min(size_usd, max_notion) if size_usd >= 1 else 0.0
+        if move == "flat" or direction == "hold":
+            size_usd = 0.0
+            direction = "hold"
         tick["size_usd"] = size_usd
+        tick["toxicity"] = toxicity
         fill = None
         shadow_fills: dict[str, Any] = {}
 
@@ -475,9 +501,11 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             tick["mid"] = snap["mid"]
             if (
                 direction in ("buy", "sell")
+                and move in ("large_up", "small_up", "large_down", "small_down")
                 and size_usd >= 1
                 and noul >= cfg["noul_min"]
                 and conf >= cfg["conf_min"]
+                and toxicity <= tox_max
             ):
                 fill = book.maybe_trade(
                     symbol=picked,
@@ -497,7 +525,12 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                         "book": "primary",
                     },
                 )
-            if direction in ("buy", "sell") and size_usd >= 1:
+            if (
+                direction in ("buy", "sell")
+                and move in ("large_up", "small_up", "large_down", "small_down")
+                and size_usd >= 1
+                and toxicity <= tox_max
+            ):
                 for scfg in shadow_cfgs:
                     if noul >= scfg["noul_min"] and conf >= scfg["conf_min"]:
                         sid = scfg["id"]
@@ -534,7 +567,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         print(
             f"[{market_id}] tick={i} pick={tick.get('selected_symbol')} "
             f"move={parsed.get('move')} dir={direction} size=${size_usd:.0f} "
-            f"noul={noul:.2f} dir_tail={conf:.2f} lat={latency_ms:.0f}ms "
+            f"noul={noul:.2f} dir_tail={conf:.2f} tox={toxicity:.2f} lat={latency_ms:.0f}ms "
             f"primary_pnl={tick['pnl']}"
             + (f" | {shadow_bits}" if shadow_bits else ""),
             flush=True,

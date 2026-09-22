@@ -119,19 +119,15 @@ def questions_for_universe(
             "type": "choice",
             "instructions": (
                 "Absolute USD notional for THIS paper trade (not a fraction of equity). "
-                "CRITICAL: if direction is buy or sell, you MUST pick a non-zero size "
-                "(50–5000). Use 0 ONLY when direction is hold or pick_symbol is none. "
-                "Scale size with edge: weak→50–100, modest→250–500, clear→1000, strong→2500–5000."
+                "If direction is buy/sell and move is not flat, pick 50–500. "
+                "Use 0 when hold, none, or move is flat. Prefer 50–250 unless edge is clear."
             ),
             "criteria": {
-                "0": "ONLY allowed with hold or none — zero size",
-                "50": "$50 notional (very weak edge)",
+                "0": "hold / none / flat — zero size",
+                "50": "$50 notional",
                 "100": "$100 notional",
                 "250": "$250 notional",
-                "500": "$500 notional",
-                "1000": "$1,000 notional",
-                "2500": "$2,500 notional",
-                "5000": "$5,000 notional (strong edge)",
+                "500": "$500 notional (max typical size)",
             },
         },
     }
