@@ -166,11 +166,13 @@ function bookRows(live) {
   const primary = live.book || {};
   const th = live.thresholds || {};
   rows.push({
-    id: primary.label || 'v_best',
+    id: primary.label || 'exp_A_short',
     gates: {
       noul_min: primary.noul_min ?? th.noul_min,
       conf_min: primary.conf_min ?? th.conf_min,
       max_notional_usd: primary.max_notional_usd ?? th.max_notional_usd,
+      require_agree: primary.require_agree,
+      block_1d_opposite: primary.block_1d_opposite,
     },
     why: primary.why || 'primary',
     ...primary,
@@ -178,7 +180,13 @@ function bookRows(live) {
   for (const [id, s] of Object.entries(live.shadows || {})) {
     rows.push({
       id,
-      gates: { noul_min: s.noul_min, conf_min: s.conf_min, max_notional_usd: s.max_notional_usd },
+      gates: {
+        noul_min: s.noul_min,
+        conf_min: s.conf_min,
+        max_notional_usd: s.max_notional_usd,
+        require_agree: s.require_agree,
+        block_1d_opposite: s.block_1d_opposite,
+      },
       why: s.why || '',
       ...s,
     });
@@ -206,7 +214,7 @@ function render(data) {
   const equity = book.equity, pnl = book.pnl, cash = book.cash, fills = book.fills;
   document.getElementById('tickers').innerHTML = `
     <div class="ticker" id="tEquity"><div class="label">权益 Equity</div><div class="value">$${money(equity)}</div><div class="sub">ticks ${live.ticks_so_far ?? 0}</div></div>
-    <div class="ticker" id="tPnl"><div class="label">总盈亏 PnL</div><div class="value ${pnlClass(pnl)}">${pnl>0?'+':''}${money(pnl)}</div><div class="sub">主账本 v_best</div></div>
+    <div class="ticker" id="tPnl"><div class="label">总盈亏 PnL</div><div class="value ${pnlClass(pnl)}">${pnl>0?'+':''}${money(pnl)}</div><div class="sub">主账本 ${book.label || 'exp_A_short'}</div></div>
     <div class="ticker" id="tCash"><div class="label">现金 Cash</div><div class="value">$${money(cash)}</div><div class="sub">可用购买力</div></div>
     <div class="ticker" id="tFills"><div class="label">成交笔数</div><div class="value">${fills ?? 0}</div><div class="sub">B ${(live.decision_dist||{}).buy||0} / S ${(live.decision_dist||{}).sell||0} / H ${(live.decision_dist||{}).hold||0}</div></div>
   `;
@@ -221,6 +229,10 @@ function render(data) {
     <div class="cell"><div class="k">动作</div><div class="v ${sideClass(side)}">${(side||'—').toUpperCase()}</div></div>
     <div class="cell"><div class="k">金额 $</div><div class="v">${money(a.size_usd)}</div></div>
     <div class="cell"><div class="k">Move</div><div class="v">${a.move ?? '—'}</div></div>
+    <div class="cell"><div class="k">Move 5m</div><div class="v">${a.move_5m ?? '—'}</div></div>
+    <div class="cell"><div class="k">Move 10m</div><div class="v">${a.move_10m ?? '—'}</div></div>
+    <div class="cell"><div class="k">Move 1h</div><div class="v">${a.move_1h ?? '—'}</div></div>
+    <div class="cell"><div class="k">Trend 1d</div><div class="v">${a.trend_1d ?? '—'}</div></div>
     <div class="cell"><div class="k">Noul</div><div class="v">${fmt(a.should_trade,3)}</div></div>
     <div class="cell"><div class="k">Dir Tail</div><div class="v">${fmt(a.dir_tail,3)}</div></div>
     <div class="cell"><div class="k">Toxicity</div><div class="v">${fmt(a.toxicity,2)}</div></div>
@@ -260,17 +272,20 @@ function render(data) {
     </tr>
   `).join('') : `<tr><td colspan="7" class="muted">当前空仓</td></tr>`;
 
-  document.getElementById('compare').innerHTML = bookRows(live).map(r => `
+  document.getElementById('compare').innerHTML = bookRows(live).map(r => {
+    const agree = Array.isArray(r.gates?.require_agree) ? r.gates.require_agree.join('+') : (r.require_agree ? (Array.isArray(r.require_agree)?r.require_agree.join('+'):r.require_agree) : '—');
+    const blk = (r.gates?.block_1d_opposite ?? r.block_1d_opposite) ? 'block1d' : 'no-block1d';
+    return `
     <tr>
       <td><b>${r.id}</b></td>
-      <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}</td>
+      <td>≥${r.gates?.noul_min ?? '—'} / ≥${r.gates?.conf_min ?? '—'} · ≤$${r.gates?.max_notional_usd ?? '—'}<br/><span class="tiny">agree:${agree} · ${blk}</span></td>
       <td>${r.fills ?? 0}</td>
       <td class="${pnlClass(r.pnl)}">${r.pnl>0?'+':''}${money(r.pnl)}</td>
       <td>$${money(r.equity)}</td>
       <td>$${money(r.cash)}</td>
       <td class="tiny" style="white-space:normal;max-width:320px">${r.why || '—'}</td>
-    </tr>
-  `).join('') || `<tr><td colspan="7" class="muted">等待 live.json</td></tr>`;
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" class="muted">等待 live.json</td></tr>`;
 }
 
 async function refresh() {

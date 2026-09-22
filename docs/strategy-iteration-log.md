@@ -109,3 +109,31 @@ Implement and observe:
 ### Next observe window
 - Continue v2; verify GitHub `logs/raw_decisions` grows over time.
 
+
+
+
+## 2026-09-22 10:28 PT · iteration 2 · CHANGE (multi-horizon A/B/C)
+
+### Observed
+- Prior v2 observe showed chase risk: short-horizon move alone can fire while 5m/10m/1h disagree.
+- Need same-tick A/B/C comparison with identical Jev answers, different agree gates.
+
+### Lessons learned
+- Measurement (MTM/caps) fixed; next risk is **horizon disagreement / chase**.
+- Logging must capture all horizons + which variant would have passed each tick.
+
+### Strategy decision · CHANGE
+1. Experiment `jev_paper_horizons_ABC_2026_09_22`: primary **exp_A_short**, shadows **exp_B_short_med** / **exp_C_multi**.
+2. Jev now answers `move` / `move_5m` / `move_10m` / `move_1h` / `trend_1d` each tick.
+3. `require_agree` + optional `block_1d_opposite` gate fills per book.
+4. Decision JSONL gains `horizons`, `variant_pass`, and gate fields; dashboard shows multi-horizon signal + A/B/C compare.
+5. Restart campaign `horizons_ABC_observe` for remaining wall time (~old ends_ts).
+
+### Code / config changes (if any)
+- `jev_trading/data/experiment.json`, `jev_client.py`, `markets.py`, `smoke.py`, `dashboard/server.py`
+- `out/EXPERIMENT.md`, `docs/EXPERIMENT.md`, this log
+
+### Next observe window
+- Fresh primary/shadow books; append-only decisions continue on same JSONL paths.
+- Success: live shadows include B/C; decisions have horizons + variant_pass; dashboard compare shows A/B/C.
+

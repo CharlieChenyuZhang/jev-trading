@@ -36,7 +36,7 @@ EXPERIMENT = _load_experiment()
 def _variant_list() -> list[dict[str, Any]]:
     """Primary first (v_best), then compare ledgers — same Jev answers, different execution."""
     variants = (EXPERIMENT.get("variants") or {})
-    order = ["v2_best", "v2_loose", "v2_strict", "v_best", "v_loose", "v_strict", "v_large_only", "v_edge_size"]
+    order = ["exp_A_short", "exp_B_short_med", "exp_C_multi", "v2_best", "v2_loose", "v2_strict"]
     out: list[dict[str, Any]] = []
     for vid in order:
         raw = variants.get(vid)
@@ -53,13 +53,15 @@ def _variant_list() -> list[dict[str, Any]]:
                 "max_notional_usd": float(raw.get("max_notional_usd", 250)),
                 "allowed_moves": list(raw.get("allowed_moves") or []),
                 "size_mode": raw.get("size_mode", "jev_capped"),
+                "require_agree": list(raw.get("require_agree") or ["move"]),
+                "block_1d_opposite": bool(raw.get("block_1d_opposite", False)),
             }
         )
     return out
 
 
 VARIANTS = _variant_list()
-PRIMARY = next((v for v in VARIANTS if v["id"] in ("v2_best", "v_best")), VARIANTS[0] if VARIANTS else None)
+PRIMARY = next((v for v in VARIANTS if v["id"] in ("exp_A_short", "v2_best", "v_best")), VARIANTS[0] if VARIANTS else None)
 COMPARE_VARIANTS = [v for v in VARIANTS if v["id"] != (PRIMARY or {}).get("id")]
 
 MARKETS: dict[str, dict[str, Any]] = {
@@ -109,6 +111,37 @@ MOVE_TO_DIR = {
     "small_down": "sell",
     "flat": "hold",
 }
+
+
+def move_sign(move: str | None) -> str:
+    """Map move bucket to buy/sell/hold."""
+    if move in MOVE_TO_DIR:
+        return MOVE_TO_DIR[move]
+    if move in ("up",):
+        return "buy"
+    if move in ("down",):
+        return "sell"
+    return "hold"
+
+
+def horizons_agree(parsed: dict[str, Any], keys: list[str]) -> bool:
+    """True if all named move horizons share the same non-hold side."""
+    signs = [move_sign(parsed.get(k)) for k in keys]
+    sides = {s for s in signs if s in ("buy", "sell")}
+    if len(sides) != 1:
+        return False
+    # none of the required horizons may be flat/hold
+    return all(s in ("buy", "sell") for s in signs)
+
+
+def blocked_by_1d(parsed: dict[str, Any], direction: str | None) -> bool:
+    trend = parsed.get("trend_1d")
+    if direction == "buy" and trend == "down":
+        return True
+    if direction == "sell" and trend == "up":
+        return True
+    return False
+
 
 SIZE_EDGE_MAP = [
     (0.5, 0.0),
@@ -168,6 +201,7 @@ def variant_passes(
     dir_tail: float,
     toxicity: float,
     size_usd: float,
+    parsed: dict[str, Any] | None = None,
 ) -> bool:
     if direction not in ("buy", "sell"):
         return False
@@ -181,6 +215,12 @@ def variant_passes(
     if dir_tail < float(variant["conf_min"]):
         return False
     if toxicity > float(variant.get("toxicity_max") or 9):
+        return False
+    parsed = parsed or {}
+    req = list(variant.get("require_agree") or ["move"])
+    if req and not horizons_agree(parsed, req):
+        return False
+    if variant.get("block_1d_opposite") and blocked_by_1d(parsed, direction):
         return False
     return True
 
@@ -332,6 +372,11 @@ def build_state(
                 "mid": s.get("mid"),
                 "spread_bps": s.get("spread_bps"),
                 "ret_short_bps": s.get("ret_short_bps"),
+                "ret_1m_bps": s.get("ret_1m_bps"),
+                "ret_5m_bps": s.get("ret_5m_bps"),
+                "ret_10m_bps": s.get("ret_10m_bps"),
+                "ret_1h_bps": s.get("ret_1h_bps"),
+                "ret_1d_bps": s.get("ret_1d_bps"),
                 "trade_imbalance": s.get("trade_imbalance"),
             }
         )
@@ -342,17 +387,17 @@ def build_state(
             "strategy": strategy_hint,
             "pool_size": pool_size,
             "candidate_count": len(compact),
-            "horizon_sec": 30,
+            "horizon_sec": {"short": 30, "m5": 300, "m10": 600, "h1": 3600, "d1": 86400},
             "return_buckets_bps": {"outer": outer_bps, "neutral": neutral_bps},
             "ts_utc": datetime.now(timezone.utc).isoformat(),
             "paper_cash_usd": 10000,
             "snapshots": compact,
             "instructions": (
                 f"Candidates are the top movers from the {market_id} pool. "
-                "Pick one symbol with edge, forecast the 30s return bucket, "
-                "set buy/sell/hold, and choose an absolute USD size. "
-                "If buy or sell, size_usd must be non-zero. Prefer trading when "
-                "a directional bucket beats flat after spread/costs."
+                "Pick one symbol. Forecast return buckets for short (~30s-1m), "
+                "5m, 10m, 1h, and a 1d trend filter. State includes realized "
+                "ret_*_bps when available. Primary action follows the SHORT bucket; "
+                "execution variants may require longer horizons to agree."
             ),
         },
         separators=(",", ":"),
@@ -366,6 +411,10 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
     p = answers.get("pick_symbol") or {}
     s = answers.get("size_usd") or {}
     m = answers.get("move") or {}
+    m5 = answers.get("move_5m") or {}
+    m10 = answers.get("move_10m") or {}
+    m1h = answers.get("move_1h") or {}
+    t1d = answers.get("trend_1d") or {}
     t = answers.get("toxicity") or {}
     size_raw = s.get("choice")
     try:
@@ -403,6 +452,11 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
         "move": move,
         "move_confidence": m.get("confidence"),
         "move_probs": m.get("probabilities"),
+        "move_5m": m5.get("choice"),
+        "move_10m": m10.get("choice"),
+        "move_1h": m1h.get("choice"),
+        "trend_1d": t1d.get("choice"),
+        "trend_1d_probs": t1d.get("probabilities"),
         "direction": direction,
         "dir_confidence": d.get("confidence"),
         "dir_probs": dir_probs,
@@ -521,11 +575,13 @@ def _checkpoint(
         },
         "book": {
             **_portfolio_snap(book, mids),
-            "label": (PRIMARY or {}).get("id") or "v2_best",
+            "label": (PRIMARY or {}).get("id") or "exp_A_short",
             "noul_min": (PRIMARY or {}).get("noul_min"),
             "conf_min": (PRIMARY or {}).get("conf_min"),
             "toxicity_max": (PRIMARY or {}).get("toxicity_max"),
             "max_notional_usd": (PRIMARY or {}).get("max_notional_usd"),
+            "require_agree": (PRIMARY or {}).get("require_agree") or ["move"],
+            "block_1d_opposite": bool((PRIMARY or {}).get("block_1d_opposite", False)),
             "why": (PRIMARY or {}).get("why"),
         },
         "experiment": EXPERIMENT.get("name"),
@@ -551,6 +607,8 @@ def _checkpoint(
         snap["max_notional_usd"] = cfg.get("max_notional_usd")
         snap["allowed_moves"] = cfg.get("allowed_moves")
         snap["size_mode"] = cfg.get("size_mode")
+        snap["require_agree"] = cfg.get("require_agree")
+        snap["block_1d_opposite"] = cfg.get("block_1d_opposite")
         snap["why"] = cfg.get("why")
         live["shadows"][sid] = snap
     (out / "live.json").write_text(json.dumps(live, indent=2))
@@ -716,13 +774,15 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         sym_cap = float(cfg.get("max_symbol_notional_usd") or 1500)
 
         primary_variant = {
-            "id": (PRIMARY or {}).get("id") or "v2_best",
+            "id": (PRIMARY or {}).get("id") or "exp_A_short",
             "noul_min": cfg["noul_min"],
             "conf_min": cfg["conf_min"],
             "toxicity_max": cfg.get("toxicity_max", 2.0),
             "max_notional_usd": cfg.get("max_notional_usd", 250),
             "allowed_moves": cfg.get("allowed_moves") or ["large_up", "small_up", "large_down", "small_down"],
             "size_mode": cfg.get("size_mode", "jev_capped"),
+            "require_agree": (PRIMARY or {}).get("require_agree") or ["move"],
+            "block_1d_opposite": bool((PRIMARY or {}).get("block_1d_opposite", False)),
         }
         size_usd = size_for_variant(
             variant=primary_variant,
@@ -758,6 +818,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     dir_tail=conf,
                     toxicity=toxicity,
                     size_usd=size_usd,
+                    parsed=parsed,
                 )
                 and symbol_exposure_ok(book, picked, float(snap["mid"]), size_usd, sym_cap)
             ):
@@ -777,7 +838,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                         "move": move,
                         "size_usd_jev": size_usd,
                         "size_usd_raw": size_raw,
-                        "book": "v2_best",
+                        "book": primary_variant["id"],
                     },
                 )
             for scfg in shadow_cfgs:
@@ -803,6 +864,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                         dir_tail=conf,
                         toxicity=toxicity,
                         size_usd=v_size,
+                        parsed=parsed,
                     )
                     and symbol_exposure_ok(shadow_books[sid], picked, float(snap["mid"]), v_size, sym_cap)
                 ):
@@ -832,6 +894,35 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         tick["equity"] = round(book.equity(mids), 2)
         tick["pnl"] = round(book.mark_pnl(mids), 2)
         tick["shadow_pnl"] = {sid: round(sb.mark_pnl(mids), 2) for sid, sb in shadow_books.items()}
+        # Whether each A/B/C variant would pass this tick (same Jev answers, different gates)
+        variant_pass: dict[str, bool] = {}
+        for v in VARIANTS:
+            v_cfg = primary_variant if v["id"] == primary_variant.get("id") else v
+            if v["id"] == primary_variant.get("id"):
+                v_size = size_usd
+            elif v["id"] in (tick.get("variant_sizes") or {}):
+                v_size = float(tick["variant_sizes"][v["id"]])
+            else:
+                v_size = size_for_variant(
+                    variant=v,
+                    direction=direction,
+                    pick=picked,
+                    move=move,
+                    size_raw=size_raw,
+                    size_probs=size_probs,
+                    edge_score=float(edge_score) if edge_score is not None else None,
+                )
+            variant_pass[v["id"]] = variant_passes(
+                variant=v_cfg,
+                direction=direction,
+                move=move,
+                noul=noul,
+                dir_tail=conf,
+                toxicity=toxicity,
+                size_usd=v_size,
+                parsed=parsed,
+            )
+        tick["variant_pass"] = variant_pass
         ticks.append(tick)
         append_decision_log(
             out,
@@ -851,7 +942,17 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     "size_mode": primary_variant.get("size_mode"),
                     "max_open_symbols": cfg.get("max_open_symbols"),
                     "rth_only": cfg.get("rth_only"),
+                    "require_agree": primary_variant.get("require_agree"),
+                    "block_1d_opposite": primary_variant.get("block_1d_opposite"),
                 },
+                "horizons": {
+                    "move": parsed.get("move"),
+                    "move_5m": parsed.get("move_5m"),
+                    "move_10m": parsed.get("move_10m"),
+                    "move_1h": parsed.get("move_1h"),
+                    "trend_1d": parsed.get("trend_1d"),
+                },
+                "variant_pass": variant_pass,
                 "candidates": tick.get("candidates"),
                 "return_buckets_bps": tick.get("return_buckets_bps"),
                 "model": tick.get("model"),
@@ -879,7 +980,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         )
         print(
             f"[{market_id}] tick={i} pick={tick.get('selected_symbol')} "
-            f"move={parsed.get('move')} dir={direction} size=${size_usd:.0f} "
+            f"move={parsed.get('move')}/{parsed.get('move_5m')}/{parsed.get('move_10m')}/{parsed.get('move_1h')} d1={parsed.get('trend_1d')} dir={direction} size=${size_usd:.0f} "
             f"noul={noul:.2f} dir_tail={conf:.2f} tox={toxicity:.2f} lat={latency_ms:.0f}ms "
             f"primary_pnl={tick['pnl']}"
             + (f" | {shadow_bits}" if shadow_bits else ""),

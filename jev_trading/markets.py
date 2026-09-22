@@ -12,6 +12,8 @@ from .httputil import http_json
 
 _DATA = Path(__file__).resolve().parent / "data"
 _MID_CACHE: dict[str, float] = {}
+_MID_HISTORY: dict[str, list[tuple[float, float]]] = {}  # symbol -> [(ts, mid), ...]
+_MID_HISTORY_MAX = 4000
 _QUOTE_CACHE: dict[str, dict[str, Any]] = {}
 _QUOTE_TS: dict[str, float] = {}
 _ROT_LOCK = threading.Lock()
@@ -38,6 +40,67 @@ def _load_symbols(path: Path, fallback: list[str]) -> list[str]:
 
 
 CRYPTO_UNIVERSE = _load_symbols(_DATA / "coinbase_usd_top254.json", _FALLBACK_CRYPTO)[:JEV_CHOICE_SYMBOL_CAP]
+
+
+def _remember_mid(symbol: str, mid: float) -> None:
+    if mid is None or mid <= 0:
+        return
+    now = time.time()
+    _MID_CACHE[symbol] = float(mid)
+    hist = _MID_HISTORY.setdefault(symbol, [])
+    hist.append((now, float(mid)))
+    if len(hist) > _MID_HISTORY_MAX:
+        del hist[: len(hist) - _MID_HISTORY_MAX]
+
+
+def ret_bps_lookback(symbol: str, lookback_s: float, current_mid: float | None = None) -> float | None:
+    """Return bps change from ~lookback_s ago to now using in-process mid history."""
+    mid = float(current_mid) if current_mid and current_mid > 0 else _MID_CACHE.get(symbol)
+    if not mid or mid <= 0:
+        return None
+    hist = _MID_HISTORY.get(symbol) or []
+    if not hist:
+        return None
+    target = time.time() - lookback_s
+    # find sample closest to target at or before target
+    past = None
+    for ts, m in hist:
+        if ts <= target:
+            past = m
+        else:
+            break
+    if past is None or past <= 0:
+        # not enough history yet
+        return None
+    return (mid - past) / past * 10_000
+
+
+def attach_horizon_rets(row: dict[str, Any]) -> dict[str, Any]:
+    """Attach multi-window realized returns (bps) onto a quote row."""
+    if row.get("error") or row.get("mid") is None:
+        return row
+    sym = row["symbol"]
+    mid = float(row["mid"])
+    _remember_mid(sym, mid)
+    # Prefer explicit fields if fetch already computed them
+    horizons = {
+        "ret_1m_bps": row.get("ret_1m_bps", row.get("ret_short_bps")),
+        "ret_5m_bps": row.get("ret_5m_bps"),
+        "ret_10m_bps": row.get("ret_10m_bps"),
+        "ret_1h_bps": row.get("ret_1h_bps"),
+        "ret_1d_bps": row.get("ret_1d_bps"),
+    }
+    # Fill gaps from mid history
+    for key, sec in (("ret_1m_bps", 60), ("ret_5m_bps", 300), ("ret_10m_bps", 600), ("ret_1h_bps", 3600)):
+        if horizons.get(key) is None:
+            v = ret_bps_lookback(sym, sec, mid)
+            if v is not None:
+                horizons[key] = round(v, 3)
+    for k, v in horizons.items():
+        if v is not None:
+            row[k] = v
+    return row
+
 STOCK_UNIVERSE = _load_symbols(_DATA / "stock_universe.json", _FALLBACK_STOCK)[:JEV_CHOICE_SYMBOL_CAP]
 
 
@@ -63,6 +126,7 @@ def _next_batch(key: str, universe: list[str], batch: int) -> list[str]:
 def _cache_put(sym: str, row: dict[str, Any]) -> None:
     if row.get("error"):
         return
+    row = attach_horizon_rets(row)
     _QUOTE_CACHE[sym] = row
     _QUOTE_TS[sym] = time.time()
 
@@ -111,7 +175,7 @@ def fetch_crypto_product(symbol: str, *, lite: bool = True) -> dict[str, Any]:
     prev = _MID_CACHE.get(symbol)
     if prev and prev > 0:
         ret_bps = (mid - prev) / prev * 10_000
-    _MID_CACHE[symbol] = mid
+    _remember_mid(symbol, mid)
 
     if not lite:
         book = http_json(f"{base}/book?level=1", timeout=8.0)
@@ -154,6 +218,7 @@ def fetch_crypto_product(symbol: str, *, lite: bool = True) -> dict[str, Any]:
         "mid": mid,
         "spread_bps": round(spread_bps, 3),
         "ret_short_bps": round(ret_bps, 3),
+        "ret_1m_bps": round(ret_bps, 3),
         "trade_imbalance": 0.0,
         "lite": True,
     }
@@ -213,8 +278,24 @@ def fetch_stock_symbol(symbol: str) -> dict[str, Any]:
     quotes = result["indicators"]["quote"][0]
     closes = [c for c in (quotes.get("close") or []) if c is not None]
     last = float(meta.get("regularMarketPrice") or (closes[-1] if closes else 0))
-    prev = float(closes[-6]) if len(closes) >= 6 else float(closes[0] if closes else last)
-    ret_bps = (last - prev) / prev * 10_000 if prev else 0.0
+    def _ret_from(n_bars: int) -> float:
+        if len(closes) > n_bars and closes[-1 - n_bars]:
+            p = float(closes[-1 - n_bars])
+            return (last - p) / p * 10_000 if p else 0.0
+        if closes and closes[0]:
+            p = float(closes[0])
+            return (last - p) / p * 10_000 if p else 0.0
+        return 0.0
+    ret_1m = _ret_from(1)
+    ret_5m = _ret_from(5)
+    ret_10m = _ret_from(10)
+    ret_1h = _ret_from(60)
+    prev_close = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0) or None
+    if prev_close and prev_close > 0 and last:
+        ret_1d = (last - prev_close) / prev_close * 10_000
+    else:
+        ret_1d = _ret_from(max(len(closes) - 1, 1)) if closes else 0.0
+    ret_bps = ret_5m  # short-horizon proxy for ranking
     spread_bps = 1.0
     half = last * spread_bps / 10_000 / 2
     bid, ask = last - half, last + half
@@ -227,6 +308,11 @@ def fetch_stock_symbol(symbol: str) -> dict[str, Any]:
         "mid": round(last, 4),
         "spread_bps": spread_bps,
         "ret_short_bps": round(ret_bps, 3),
+        "ret_1m_bps": round(ret_1m, 3),
+        "ret_5m_bps": round(ret_5m, 3),
+        "ret_10m_bps": round(ret_10m, 3),
+        "ret_1h_bps": round(ret_1h, 3),
+        "ret_1d_bps": round(ret_1d, 3),
         "trade_imbalance": 0.0,
         "note": "stock TOB approximated from last + 1bp spread proxy",
     }

@@ -19,6 +19,16 @@ def resolve_api_key() -> str:
     )
 
 
+def _move_criteria(outer_bps: float, neutral_bps: float) -> dict[str, str]:
+    return {
+        "large_down": f"R <= -{outer_bps:.1f} bps (large down)",
+        "small_down": f"-{outer_bps:.1f} < R <= -{neutral_bps:.1f} bps (small down)",
+        "flat": f"-{neutral_bps:.1f} < R < {neutral_bps:.1f} bps (narrow / flat)",
+        "small_up": f"{neutral_bps:.1f} <= R < {outer_bps:.1f} bps (small up)",
+        "large_up": f"R >= {outer_bps:.1f} bps (large up)",
+    }
+
+
 def questions_for_universe(
     market_id: str,
     symbols: list[str],
@@ -27,79 +37,104 @@ def questions_for_universe(
     outer_bps: float = 8.0,
     neutral_bps: float = 2.0,
 ) -> dict[str, Any]:
-    """Layered Jev questions (FMZ / TypeSafe style): pick → move bucket → trade → size → toxicity."""
+    """Pick symbol + multi-horizon move forecasts + trade/size/toxicity."""
     criteria = {
-        sym: f"Best short-horizon opportunity in the candidate set: {sym}" for sym in symbols
+        sym: f"Best opportunity in the candidate set across horizons: {sym}" for sym in symbols
     }
-    # Keep none, but do not encourage it as the default
     criteria["none"] = "Only if every candidate is noise relative to costs; otherwise pick one"
-
-    large_dn = f"R <= -{outer_bps:.1f} bps (large down)"
-    small_dn = f"-{outer_bps:.1f} < R <= -{neutral_bps:.1f} bps (small down)"
-    flat = f"-{neutral_bps:.1f} < R < {neutral_bps:.1f} bps (narrow / flat)"
-    small_up = f"{neutral_bps:.1f} <= R < {outer_bps:.1f} bps (small up)"
-    large_up = f"R >= {outer_bps:.1f} bps (large up)"
+    mc = _move_criteria(outer_bps, neutral_bps)
+    # Slightly wider buckets for longer horizons
+    mc_med = _move_criteria(max(outer_bps, 12.0), max(neutral_bps, 3.0))
+    mc_long = _move_criteria(max(outer_bps, 20.0), max(neutral_bps, 5.0))
 
     return {
         "pick_symbol": {
             "type": "choice",
             "instructions": (
                 f"For {market_id} ({strategy_hint}): pick ONE symbol from the candidate "
-                "set with the clearest short-horizon edge. Prefer a real symbol when "
-                "any name shows directional pressure, imbalance, or abnormal short return. "
-                "Use none only when the whole set is flat noise."
+                "set. Prefer names where short and medium horizons agree. Use none only "
+                "when the whole set is flat noise."
             ),
             "criteria": criteria,
         },
         "move": {
             "type": "choice",
             "instructions": (
-                "For the picked symbol only: over the next ~30 seconds, which return "
-                "interval (R = 10000 * (future_mid/mid - 1)) is most likely? "
-                "If pick_symbol is none, choose flat."
+                "SHORT horizon (~30s–1m): which return bucket is most likely for the picked "
+                "symbol? If pick is none, choose flat."
+            ),
+            "criteria": mc,
+        },
+        "move_5m": {
+            "type": "choice",
+            "instructions": (
+                "MEDIUM ~5 minutes: which return bucket is most likely for the picked symbol? "
+                "If pick is none, flat."
+            ),
+            "criteria": mc_med,
+        },
+        "move_10m": {
+            "type": "choice",
+            "instructions": (
+                "MEDIUM ~10 minutes: which return bucket is most likely for the picked symbol? "
+                "If pick is none, flat."
+            ),
+            "criteria": mc_med,
+        },
+        "move_1h": {
+            "type": "choice",
+            "instructions": (
+                "LONGER ~1 hour: which return bucket is most likely for the picked symbol? "
+                "If pick is none, flat."
+            ),
+            "criteria": mc_long,
+        },
+        "trend_1d": {
+            "type": "choice",
+            "instructions": (
+                "DAY filter (not the main trade trigger): for the picked symbol, is the "
+                "broad ~1 day trend up, down, or flat/noisy? If pick is none, flat."
             ),
             "criteria": {
-                "large_down": large_dn,
-                "small_down": small_dn,
-                "flat": flat,
-                "small_up": small_up,
-                "large_up": large_up,
+                "up": "Broad 1d trend up / constructive",
+                "down": "Broad 1d trend down / weak",
+                "flat": "No clear 1d trend / chop",
             },
         },
         "direction": {
             "type": "choice",
             "instructions": (
-                "Translate the move into an action for the picked symbol. "
+                "Primary action for the SHORT horizon (move). "
                 "large_up/small_up → buy; large_down/small_down → sell; flat → hold. "
                 "If pick is none, hold."
             ),
             "criteria": {
-                "buy": "Expect net upward move; open/add long paper exposure",
-                "sell": "Expect net downward move; open/add short or reduce long",
+                "buy": "Expect net upward move on the short horizon",
+                "sell": "Expect net downward move on the short horizon",
                 "hold": "Flat / none / edge below cost — do not trade",
             },
         },
         "should_trade": {
             "type": "noul",
             "instructions": (
-                "After fees/spread, should we place a paper trade NOW on the picked symbol? "
-                "True when direction is buy/sell and the move is not flat noise. "
-                "False when pick is none, direction is hold, or edge cannot cover costs."
+                "After fees/spread, should we place a paper trade NOW? "
+                "True when short-horizon direction is buy/sell and not pure noise. "
+                "False when pick is none, hold, or edge cannot cover costs."
             ),
             "criteria": {
-                "true": "Directional move looks tradeable now on the picked symbol",
+                "true": "Short-horizon edge looks tradeable now",
                 "false": "Skip this tick",
             },
         },
         "edge": {
             "type": "score",
-            "instructions": "Quality of short-horizon edge for the picked symbol (0 if none/flat)",
+            "instructions": "Quality of edge for the picked symbol (0 if none/flat)",
             "criteria": [
                 "No edge / noise",
                 "Very weak — barely above noise",
                 "Modest — tradeable with small size",
-                "Clear — solid short-horizon edge",
-                "Strong — high-conviction short-horizon edge",
+                "Clear — solid edge",
+                "Strong — high-conviction edge",
             ],
         },
         "toxicity": {
@@ -119,8 +154,8 @@ def questions_for_universe(
             "type": "choice",
             "instructions": (
                 "Absolute USD notional for THIS paper trade (not a fraction of equity). "
-                "If direction is buy/sell and move is not flat, pick 50–500. "
-                "Use 0 when hold, none, or move is flat. Prefer 50–250 unless edge is clear."
+                "If direction is buy/sell and short move is not flat, pick 50–500. "
+                "Use 0 when hold, none, or flat. Prefer 50–250 unless edge is clear."
             ),
             "criteria": {
                 "0": "hold / none / flat — zero size",
@@ -134,7 +169,6 @@ def questions_for_universe(
 
 
 def questions_for_market(market_id: str, *, strategy_hint: str) -> dict[str, Any]:
-    """Legacy single-symbol question set."""
     return questions_for_universe(market_id, [market_id], strategy_hint=strategy_hint)
 
 
