@@ -188,3 +188,30 @@ Implement and observe:
 ### Next observe window
 - Fresh primary/shadow books; decisions JSONL continues append-only.
 - Success: live shadows include D–H; decisions have variant_pass keys A–H; dashboard compare shows A–H.
+
+
+## 2026-09-22 11:31 PT · iteration 5 · KEEP/OBSERVE (A–H early window)
+
+### Observed
+- Campaign `A_to_H_observe` active; ends_ts `2026-09-22T21:06:00Z` (~14:06 PT); ~2.6h remaining. Restarted ~11:27 PT. PIDs crypto/stock/dashboard all alive; dashboard http://127.0.0.1:8787 returns 200. No restarts this hour.
+- **Crypto primary `exp_A_short` (~17 ticks / ~3m since A–H restart):** equity ≈ **$9986–$9999** / PnL ≈ **−$1 to −$14** (mark noise); **~7–11 fills** in window; **3 open** (XRP short, NEAR short, SXT long). All mids healthy; `mark_stale=false`; no mid=0. Decision mix skewed sell/buy on alts; pick concentration on **SXT-USD** (majority of picks) plus NEAR/AIOZ/XRP. Regime mostly **chop**; trade_imbalance ≈ 0.
+- **Crypto shadows (same ticks):** B/C/D still **0 fills / flat $10k** (agree / imbalance gates quiet). E ≈ A with slightly fewer open (exit overlay); F/H ≈ A PnL; G slightly green (~+$0.13) on same names — differences are tiny and not yet meaningful. `variant_pass` true rates ~A/E/F/G ~11/17, H ~9/17, B/C/D **0/17**.
+- **Stock:** process alive but **very slow cadence** (~1 logged tick in ~3m; live.json can lag mid-tick while Yahoo quotes). JSONL shows `session_ok=true`, one early **TSLA short** fill (~$100) with A/B/E/F/G/H pass and C/D false; live snapshot may still read flat until next live write. RTH gate appears intact. Sample too small to rank A–H.
+- Accounting vs trading: crypto MTM looks real (nonzero mids, no wipeouts). Stock live lag is operational, not an invented PnL bug.
+
+### Lessons learned
+1. **Good:** A–H ledgers + `variant_pass` keys are live and differentiating (B/C/D silence vs A/E/F/G/H activity) without truncating JSONL history.
+2. **Good:** v2 guards still hold — open count well under max-8; stock `session_ok` / RTH; no stale/zero marks on open crypto names.
+3. **Bad / watch:** crypto still **name-clusters on thin alts (SXT)** and flip-flops size on the same symbol within minutes — capacity and adverse selection risk; H markout veto only slightly quieter so far.
+4. **Bad / watch:** stock tick rate much slower than crypto (likely Yahoo polling); do not treat a 1-tick sample as strategy evidence; watch that live.json keeps catching up.
+5. Evidence too thin (~3 minutes post A–H restart) to change gates, exits, or primary — KEEP/OBSERVE.
+
+### Strategy decision · KEEP/OBSERVE
+- No strategy/code change this hour. Continue primary A + shadows B–H until more fills accumulate or a concrete failure appears (stale marks, RTH leak, cap breach, live stuck).
+- Watch next windows for: (a) first B/C/D crypto fills, (b) whether E exits help vs A on SXT churn, (c) stock fill rate / live freshness under RTH.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~12:08–12:40 PT; campaign end ~14:06 PT. If ends_ts passes and both smokes exit → final summary + delete routine `jev-trading-hourly-strategy-iterate`.
