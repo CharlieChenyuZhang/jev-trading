@@ -1,9 +1,9 @@
 {
-  "name": "jev_paper_G_primary_24h_2026_09_22",
-  "iteration": 9,
-  "goal": "G_primary_24h: crypto primary = regime fade (exp_G_regime_mr); stock primary stays exp_A_short (G remains a stock shadow). Same Jev multi-horizon answers; A\u2013H compare ledgers. Hourly RSI reflect: model reviews right/wrong decisions; CHANGE only on clear lessons else KEEP.",
+  "name": "jev_paper_G_primary_fade_fix_24h_2026_09_22",
+  "iteration": 10,
+  "goal": "G_primary_fade_fix_24h: crypto primary = exp_G_regime_mr WITH fade applied on primary path (bugfix: prior G_primary_24h never called apply_regime_fade on primary so G\u2261A). Stock primary stays exp_A_short. A\u2013H shadows unchanged. Fresh $10k books.",
   "primary": "exp_G_regime_mr",
-  "lessons_ref": "docs/strategy-iteration-log.md \u2014 iteration 9 G primary crypto 24h",
+  "lessons_ref": "docs/strategy-iteration-log.md \u2014 iteration 10 G primary fade fix",
   "variants": {
     "exp_A_short": {
       "role": "primary",
@@ -139,7 +139,7 @@
     },
     "exp_G_regime_mr": {
       "role": "primary",
-      "why": "G: trend\u2192A momentum; chop\u2192fade large moves only, skip small, size cap 100 (crypto primary this campaign; stock shadow)",
+      "why": "G: trend\u2192A momentum; chop\u2192fade large moves only, skip small, size cap 100 (crypto primary; fade now applied on primary path, not shadow-only)",
       "noul_min": 0.42,
       "dir_tail_min": 0.4,
       "toxicity_max": 2.0,

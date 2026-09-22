@@ -325,3 +325,31 @@ Implement and observe:
 ### Next observe window
 - ~24h until ends_ts 2026-09-23 ~15:19 PT / 22:19 UTC. First hourly reflect should confirm G primary on crypto live ticks and A on stock; watch chop-fade vs trend hours and stock RTH sample size.
 
+
+
+## 2026-09-22 16:32 PT · iteration 10 · CHANGE (G primary fade fix · fresh 24h)
+
+### Observed
+- Campaign `G_primary_24h` (~1.1h in; ends_ts was 2026-09-23T22:19Z). Crypto/stock/dashboard PIDs alive before change. Stock `session_ok=false` (after RTH) → **0 fills / flat $10k** across A–H (expected overnight).
+- **Crypto primary `exp_G_regime_mr` pre-fix (~400 ticks):** equity ≈ **$9914** / PnL ≈ **−$86** / **69 fills** / **8 open**. Rank by PnL: **D 0 > C ≈−$3 / 3f > H ≈−$5 / 36f > B ≈−$37 / 25f > E ≈−$50 / 172f > G=A=F ≈−$86 / 69f**.
+- **Critical:** G vs A PnL diverged on **0 / ~400** ticks. Chop primary fills were momentum (buy large_up / sell large_down), not fade. Root cause: `apply_regime_fade` ran only in the **shadow** loop; with G promoted to primary, the primary entry path used raw Jev direction — so **G ≡ A**.
+- AURORA concentration still hurt the shared G/A book (~−$66 unrealized on AURORA short). E still overtrades (172 fills). D silent (imbalance≈0). Horizon disagree ~72%.
+- Prior A–H observe FINAL (iter 8) had still favored G when G was a **shadow** — consistent with the bug only biting G-as-primary.
+
+### Lessons learned
+1. **Clear bug / actionable:** Promoting a fade overlay to primary requires the **primary** trade path to call `apply_regime_fade` (and honor `primary_fade_ok` / chop size cap). Shadow-only application silently nullifies the experiment.
+2. Early ~1h of `G_primary_24h` is **not** evidence against regime fade — it was an A-clone run. Do not KEEP that wave.
+3. Stock overnight flat is RTH guard working, not a signal. E churn + thin-alt clustering remain watch items after the fix.
+4. Post-restart smoke log already shows chop fade fills (`large_up→sell`, `large_down→buy`, `fade_applied=true`) and **G≠A** PnL within first ticks — fix verified live.
+
+### Strategy decision · CHANGE
+- Fix `jev_trading/smoke.py` primary entry to apply regime fade when `fade_in_chop`.
+- Archive prior books under `out/archive_pre_G_fade_fix_20260922_163053/`. Fresh **$10k** books. New campaign **`G_primary_fade_fix_24h`** (iteration 10), ends_ts `2026-09-23T23:30:55.713766+00:00` (~24h). Crypto primary G, stock primary A. JSONL history preserved append-only under `logs/raw_decisions/`.
+
+### Code / config changes
+- `jev_trading/smoke.py`: primary path uses `apply_regime_fade` → `primary_dir` / `primary_move` / `primary_fade_ok`; skip entry when fade says hold; meta `fade_applied` + `regime` on primary fills.
+- `jev_trading/data/experiment.json`: `jev_paper_G_primary_fade_fix_24h_2026_09_22`, iteration 10.
+- `out/campaign.json` + new smoke PIDs; prior wave archived.
+
+### Next observe window
+- Hourly reflect through ends_ts ~2026-09-23T23:30:55.713766+00:00. Confirm G continues to diverge from A in chop, and whether G leads shadows over a full day (incl. next RTH for stock).

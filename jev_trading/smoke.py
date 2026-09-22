@@ -1173,7 +1173,23 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             size_probs=size_probs,
             edge_score=float(edge_score) if edge_score is not None else None,
         )
+        # G-as-primary: apply regime fade on the primary book (same helper shadows use).
+        # Without this, fade_in_chop only ran in the shadow loop so G primary == A.
+        primary_dir = direction
+        primary_move = move
+        primary_fade_ok = True
+        if primary_variant.get("fade_in_chop"):
+            primary_dir, primary_move, size_usd, primary_fade_ok = apply_regime_fade(
+                regime=regime,
+                direction=direction,
+                move=move,
+                size_usd=size_usd,
+                variant=primary_variant,
+            )
+            if not primary_fade_ok:
+                size_usd = 0.0
         tick["size_usd"] = size_usd
+        tick["primary_fade_ok"] = primary_fade_ok
         tick["toxicity"] = toxicity
         tick["variant_sizes"] = {}
         fill = None
@@ -1273,11 +1289,13 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             tick["open_symbols"] = open_symbol_count(book)
             if (
                 session_ok
+                and primary_fade_ok
+                and size_usd > 0
                 and allow_new_symbol(book, picked, max_open)
                 and variant_passes(
                     variant=primary_variant,
-                    direction=direction,
-                    move=move,
+                    direction=primary_dir,
+                    move=primary_move,
                     noul=noul,
                     dir_tail=conf,
                     toxicity=toxicity,
@@ -1289,7 +1307,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             ):
                 fill = book.maybe_trade(
                     symbol=picked,
-                    side=direction,
+                    side=primary_dir,
                     mid=snap["mid"],
                     bid=snap["bid"],
                     ask=snap["ask"],
@@ -1300,10 +1318,12 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                         "dir_tail": conf,
                         "toxicity": toxicity,
                         "edge": edge_score,
-                        "move": move,
+                        "move": primary_move,
                         "size_usd_jev": size_usd,
                         "size_usd_raw": size_raw,
                         "book": primary_variant["id"],
+                        "regime": regime,
+                        "fade_applied": bool(primary_variant.get("fade_in_chop")),
                     },
                 )
             for scfg in shadow_cfgs:
