@@ -66,6 +66,25 @@ def questions_for_universe(market_id: str, symbols: list[str], *, strategy_hint:
                 "Strong",
             ],
         },
+
+        "size_usd": {
+            "type": "choice",
+            "instructions": (
+                "Absolute paper trade size in USD notional for this tick "
+                "(not a fraction of equity). Use 0 if hold / none / no trade. "
+                "Pick a concrete dollar amount."
+            ),
+            "criteria": {
+                "0": "No trade / zero size",
+                "50": "About $50 notional",
+                "100": "About $100 notional",
+                "250": "About $250 notional",
+                "500": "About $500 notional",
+                "1000": "About $1,000 notional",
+                "2500": "About $2,500 notional",
+                "5000": "About $5,000 notional",
+            },
+        },
     }
 
 
@@ -102,6 +121,25 @@ def questions_for_market(market_id: str, *, strategy_hint: str) -> dict[str, Any
                 "Clear",
                 "Strong",
             ],
+        },
+
+        "size_usd": {
+            "type": "choice",
+            "instructions": (
+                "Absolute paper trade size in USD notional for this tick "
+                "(not a fraction of equity). Use 0 if hold / none / no trade. "
+                "Pick a concrete dollar amount."
+            ),
+            "criteria": {
+                "0": "No trade / zero size",
+                "50": "About $50 notional",
+                "100": "About $100 notional",
+                "250": "About $250 notional",
+                "500": "About $500 notional",
+                "1000": "About $1,000 notional",
+                "2500": "About $2,500 notional",
+                "5000": "About $5,000 notional",
+            },
         },
     }
 

@@ -84,7 +84,9 @@ def build_state(market_id: str, snaps: dict[str, dict], strategy_hint: str, univ
             "snapshots": compact,
             "instructions": (
                 f"Pick at most one symbol from the {market_id} universe with the best "
-                "short-horizon edge. Prefer none when unclear. Do not mix asset classes."
+                "short-horizon edge. Prefer none when unclear. Do not mix asset classes. "
+                "Also choose an absolute USD notional size_usd (not a fraction of equity). "
+                "Use 0 when hold/none. Starting paper cash is about $10,000 per book."
             ),
         },
         separators=(",", ":"),
@@ -96,6 +98,12 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
     n = answers.get("should_trade") or {}
     e = answers.get("edge") or {}
     p = answers.get("pick_symbol") or {}
+    s = answers.get("size_usd") or {}
+    size_raw = s.get("choice")
+    try:
+        size_usd = float(size_raw) if size_raw is not None else 0.0
+    except (TypeError, ValueError):
+        size_usd = 0.0
     return {
         "pick_symbol": p.get("choice"),
         "pick_confidence": p.get("confidence"),
@@ -106,6 +114,9 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
         "should_trade": n.get("noul"),
         "edge_score": e.get("score"),
         "edge_confidence": e.get("confidence"),
+        "size_usd": size_usd,
+        "size_confidence": s.get("confidence"),
+        "size_probs": s.get("probabilities"),
     }
 
 
@@ -281,20 +292,35 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         fill = None
         shadow_fills: dict[str, Any] = {}
 
+        size_usd = float(parsed.get("size_usd") or 0)
+        tick["size_usd"] = size_usd
         if picked and picked != "none" and picked in snaps and snaps[picked].get("mid") is not None:
             snap = snaps[picked]
             tick["selected_symbol"] = picked
             tick["mid"] = snap["mid"]
-            if direction in ("buy", "sell") and noul >= cfg["noul_min"] and conf >= cfg["conf_min"]:
+            if (
+                direction in ("buy", "sell")
+                and size_usd >= 1
+                and noul >= cfg["noul_min"]
+                and conf >= cfg["conf_min"]
+            ):
                 fill = book.maybe_trade(
                     symbol=picked,
                     side=direction,
                     mid=snap["mid"],
                     bid=snap["bid"],
                     ask=snap["ask"],
-                    meta={"i": i, "noul": noul, "conf": conf, "edge": parsed.get("edge_score"), "book": "primary"},
+                    notional_usd=size_usd,
+                    meta={
+                        "i": i,
+                        "noul": noul,
+                        "conf": conf,
+                        "edge": parsed.get("edge_score"),
+                        "size_usd_jev": size_usd,
+                        "book": "primary",
+                    },
                 )
-            if direction in ("buy", "sell"):
+            if direction in ("buy", "sell") and size_usd >= 1:
                 for scfg in shadow_cfgs:
                     if noul >= scfg["noul_min"] and conf >= scfg["conf_min"]:
                         sid = scfg["id"]
@@ -304,7 +330,15 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                             mid=snap["mid"],
                             bid=snap["bid"],
                             ask=snap["ask"],
-                            meta={"i": i, "noul": noul, "conf": conf, "edge": parsed.get("edge_score"), "book": sid},
+                            notional_usd=size_usd,
+                            meta={
+                                "i": i,
+                                "noul": noul,
+                                "conf": conf,
+                                "edge": parsed.get("edge_score"),
+                                "size_usd_jev": size_usd,
+                                "book": sid,
+                            },
                         )
         else:
             tick["selected_symbol"] = picked or "none"
@@ -321,7 +355,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
         )
         print(
             f"[{market_id}] tick={i} pick={tick.get('selected_symbol')} "
-            f"dir={direction} noul={noul:.2f} lat={latency_ms:.0f}ms "
+            f"dir={direction} size=${size_usd:.0f} noul={noul:.2f} lat={latency_ms:.0f}ms "
             f"primary_pnl={tick['pnl']}"
             + (f" | {shadow_bits}" if shadow_bits else ""),
             flush=True,

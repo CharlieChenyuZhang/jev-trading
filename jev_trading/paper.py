@@ -12,7 +12,7 @@ class Book:
     avg_entry: float = 0.0
     realized_pnl: float = 0.0
     fills: list[dict] = field(default_factory=list)
-    trade_frac: float = 0.01
+    trade_frac: float = 0.01  # unused when notional_usd is provided
 
     def equity(self, mid: float) -> float:
         return self.cash + self.position * mid
@@ -22,10 +22,26 @@ class Book:
             return self.realized_pnl + self.position * (mid - self.avg_entry)
         return self.realized_pnl
 
-    def maybe_trade(self, *, side: str, mid: float, bid: float, ask: float, meta: dict) -> dict | None:
+    def maybe_trade(
+        self,
+        *,
+        side: str,
+        mid: float,
+        bid: float,
+        ask: float,
+        meta: dict,
+        notional_usd: float | None = None,
+    ) -> dict | None:
         px = ask if side == "buy" else bid
-        notional = self.equity(mid) * self.trade_frac
+        if notional_usd is None:
+            notional = self.equity(mid) * self.trade_frac
+        else:
+            notional = float(notional_usd)
         if notional < 1 or px <= 0:
+            return None
+        if side == "buy":
+            notional = min(notional, max(0.0, self.cash * 0.99))
+        if notional < 1:
             return None
         qty = notional / px
         if side == "buy":
@@ -54,7 +70,7 @@ class Book:
                     self.avg_entry = ((self.avg_entry * old) + qty_left * px) / (old + qty_left)
                 self.position = new_pos
                 self.cash += qty_left * px
-        fill = {"side": side, "px": px, "qty": qty, **meta}
+        fill = {"side": side, "px": px, "qty": qty, "notional_usd": round(qty * px, 2), **meta}
         self.fills.append(fill)
         return fill
 
@@ -68,7 +84,7 @@ class Portfolio:
     avg_entry: dict[str, float] = field(default_factory=dict)
     realized_pnl: float = 0.0
     fills: list[dict] = field(default_factory=list)
-    trade_frac: float = 0.01
+    trade_frac: float = 0.01  # unused when notional_usd is provided
 
     def equity(self, mids: dict[str, float]) -> float:
         return self.cash + sum(qty * float(mids.get(sym, 0) or 0) for sym, qty in self.positions.items())
@@ -90,14 +106,21 @@ class Portfolio:
         bid: float,
         ask: float,
         meta: dict,
+        notional_usd: float | None = None,
     ) -> dict | None:
         px = ask if side == "buy" else bid
         mids = {symbol: mid}
-        # include zeros for known positions so equity is sane
         for s in self.positions:
             mids.setdefault(s, self.avg_entry.get(s, 0.0))
-        notional = self.equity(mids) * self.trade_frac
+        if notional_usd is None:
+            notional = self.equity(mids) * self.trade_frac
+        else:
+            notional = float(notional_usd)
         if notional < 1 or px <= 0:
+            return None
+        if side == "buy":
+            notional = min(notional, max(0.0, self.cash * 0.99))
+        if notional < 1:
             return None
         qty = notional / px
         pos = self.positions.get(symbol, 0.0)
@@ -129,6 +152,13 @@ class Portfolio:
             if abs(self.positions[symbol]) < 1e-12:
                 self.positions.pop(symbol, None)
                 self.avg_entry.pop(symbol, None)
-        fill = {"symbol": symbol, "side": side, "px": px, "qty": qty, **meta}
+        fill = {
+            "symbol": symbol,
+            "side": side,
+            "px": px,
+            "qty": qty,
+            "notional_usd": round(qty * px, 2),
+            **meta,
+        }
         self.fills.append(fill)
         return fill
