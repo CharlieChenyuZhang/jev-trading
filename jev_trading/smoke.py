@@ -36,7 +36,7 @@ EXPERIMENT = _load_experiment()
 def _variant_list() -> list[dict[str, Any]]:
     """Primary first (v_best), then compare ledgers — same Jev answers, different execution."""
     variants = (EXPERIMENT.get("variants") or {})
-    order = ["v_best", "v_loose", "v_strict", "v_large_only", "v_edge_size"]
+    order = ["v2_best", "v2_loose", "v2_strict", "v_best", "v_loose", "v_strict", "v_large_only", "v_edge_size"]
     out: list[dict[str, Any]] = []
     for vid in order:
         raw = variants.get(vid)
@@ -59,7 +59,7 @@ def _variant_list() -> list[dict[str, Any]]:
 
 
 VARIANTS = _variant_list()
-PRIMARY = next((v for v in VARIANTS if v["id"] == "v_best"), VARIANTS[0] if VARIANTS else None)
+PRIMARY = next((v for v in VARIANTS if v["id"] in ("v2_best", "v_best")), VARIANTS[0] if VARIANTS else None)
 COMPARE_VARIANTS = [v for v in VARIANTS if v["id"] != (PRIMARY or {}).get("id")]
 
 MARKETS: dict[str, dict[str, Any]] = {
@@ -71,6 +71,8 @@ MARKETS: dict[str, dict[str, Any]] = {
         "default_duration_s": 45,
         "interval_s": 8.0,
         "max_symbol_notional_usd": 1500.0,
+        "max_open_symbols": 8,
+        "rth_only": False,
         # primary knobs live on PRIMARY; shadows = compare variants
         "noul_min": float(PRIMARY["noul_min"]) if PRIMARY else 0.45,
         "conf_min": float(PRIMARY["conf_min"]) if PRIMARY else 0.42,
@@ -88,6 +90,8 @@ MARKETS: dict[str, dict[str, Any]] = {
         "default_duration_s": 45,
         "interval_s": 25.0,
         "max_symbol_notional_usd": 1500.0,
+        "max_open_symbols": 8,
+        "rth_only": True,
         "noul_min": float(PRIMARY["noul_min"]) if PRIMARY else 0.45,
         "conf_min": float(PRIMARY["conf_min"]) if PRIMARY else 0.42,
         "toxicity_max": float(PRIMARY["toxicity_max"]) if PRIMARY else 2.0,
@@ -185,6 +189,29 @@ def symbol_exposure_ok(book: Portfolio, symbol: str, mid: float, add_notional: f
     """Keep gross per-symbol paper exposure under cap."""
     pos = abs(float(book.positions.get(symbol, 0.0))) * float(mid or 0)
     return (pos + abs(add_notional)) <= cap + 1e-6
+
+
+def in_us_rth(now_utc: datetime | None = None) -> bool:
+    """Approx US cash equity RTH in America/Los_Angeles (no holiday calendar)."""
+    from zoneinfo import ZoneInfo
+    now = now_utc or datetime.now(timezone.utc)
+    local = now.astimezone(ZoneInfo("America/Los_Angeles"))
+    if local.weekday() >= 5:
+        return False
+    minutes = local.hour * 60 + local.minute
+    # 06:30–13:00 PT ≈ 09:30–16:00 ET
+    return 6 * 60 + 30 <= minutes <= 13 * 60
+
+
+def open_symbol_count(book: Portfolio) -> int:
+    return sum(1 for q in book.positions.values() if abs(q) > 1e-12)
+
+
+def allow_new_symbol(book: Portfolio, symbol: str, max_open: int) -> bool:
+    if symbol in book.positions and abs(book.positions.get(symbol, 0.0)) > 1e-12:
+        return True
+    return open_symbol_count(book) < max_open
+
 
 
 
@@ -395,10 +422,12 @@ def parse_answers(answers: dict[str, Any]) -> dict[str, Any]:
 def _portfolio_snap(book: Portfolio, mids: dict[str, float]) -> dict[str, Any]:
     positions_detail = []
     for sym, qty in book.positions.items():
-        mid = float(mids.get(sym, 0) or 0)
+        raw = mids.get(sym)
+        mid = book.mark_mid(sym, raw) if hasattr(book, "mark_mid") else float(raw or 0)
         avg = float(book.avg_entry.get(sym, mid) or 0)
-        notional = qty * mid
-        u_pnl = qty * (mid - avg) if avg else 0.0
+        mark = mid if mid > 0 else avg
+        notional = qty * mark
+        u_pnl = qty * (mid - avg) if (mid > 0 and avg) else 0.0
         positions_detail.append(
             {
                 "symbol": sym,
@@ -407,6 +436,7 @@ def _portfolio_snap(book: Portfolio, mids: dict[str, float]) -> dict[str, Any]:
                 "avg_entry": round(avg, 6) if avg else None,
                 "notional_usd": round(notional, 2),
                 "unrealized_pnl": round(u_pnl, 2),
+                "mark_stale": bool(mid <= 0),
                 "side": "long" if qty > 0 else "short",
             }
         )
@@ -477,7 +507,7 @@ def _checkpoint(
         },
         "book": {
             **_portfolio_snap(book, mids),
-            "label": "v_best",
+            "label": (PRIMARY or {}).get("id") or "v2_best",
             "noul_min": (PRIMARY or {}).get("noul_min"),
             "conf_min": (PRIMARY or {}).get("conf_min"),
             "toxicity_max": (PRIMARY or {}).get("toxicity_max"),
@@ -586,7 +616,10 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             continue
 
         mids = {sym: float(s["mid"]) for sym, s in snaps.items() if s.get("mid") is not None}
-        last_mids = mids or last_mids
+        last_mids = {**last_mids, **mids}
+        book.remember_mids(mids)
+        for sb in shadow_books.values():
+            sb.remember_mids(mids)
         candidates = rank_candidates(snaps, universe, candidate_k)
         if not candidates:
             errors.append({"i": i, "stage": "market", "error": "no symbols fetched"})
@@ -683,15 +716,24 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
             snap = snaps[picked]
             tick["selected_symbol"] = picked
             tick["mid"] = snap["mid"]
-            if variant_passes(
-                variant=primary_variant,
-                direction=direction,
-                move=move,
-                noul=noul,
-                dir_tail=conf,
-                toxicity=toxicity,
-                size_usd=size_usd,
-            ) and symbol_exposure_ok(book, picked, float(snap["mid"]), size_usd, sym_cap):
+            max_open = int(cfg.get("max_open_symbols") or 8)
+            session_ok = (not cfg.get("rth_only")) or in_us_rth()
+            tick["session_ok"] = session_ok
+            tick["open_symbols"] = open_symbol_count(book)
+            if (
+                session_ok
+                and allow_new_symbol(book, picked, max_open)
+                and variant_passes(
+                    variant=primary_variant,
+                    direction=direction,
+                    move=move,
+                    noul=noul,
+                    dir_tail=conf,
+                    toxicity=toxicity,
+                    size_usd=size_usd,
+                )
+                and symbol_exposure_ok(book, picked, float(snap["mid"]), size_usd, sym_cap)
+            ):
                 fill = book.maybe_trade(
                     symbol=picked,
                     side=direction,
@@ -708,7 +750,7 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                         "move": move,
                         "size_usd_jev": size_usd,
                         "size_usd_raw": size_raw,
-                        "book": "v_best",
+                        "book": "v2_best",
                     },
                 )
             for scfg in shadow_cfgs:
@@ -723,15 +765,20 @@ def run_smoke(market_id: str, *, duration_s: float | None = None, out_dir: Path 
                     edge_score=float(edge_score) if edge_score is not None else None,
                 )
                 tick["variant_sizes"][sid] = v_size
-                if variant_passes(
-                    variant=scfg,
-                    direction=direction,
-                    move=move,
-                    noul=noul,
-                    dir_tail=conf,
-                    toxicity=toxicity,
-                    size_usd=v_size,
-                ) and symbol_exposure_ok(shadow_books[sid], picked, float(snap["mid"]), v_size, sym_cap):
+                if (
+                    session_ok
+                    and allow_new_symbol(shadow_books[sid], picked, max_open)
+                    and variant_passes(
+                        variant=scfg,
+                        direction=direction,
+                        move=move,
+                        noul=noul,
+                        dir_tail=conf,
+                        toxicity=toxicity,
+                        size_usd=v_size,
+                    )
+                    and symbol_exposure_ok(shadow_books[sid], picked, float(snap["mid"]), v_size, sym_cap)
+                ):
                     shadow_fills[sid] = shadow_books[sid].maybe_trade(
                         symbol=picked,
                         side=direction,

@@ -13,13 +13,24 @@ class Book:
     realized_pnl: float = 0.0
     fills: list[dict] = field(default_factory=list)
     trade_frac: float = 0.01  # unused when notional_usd is provided
+    last_good_mid: float | None = None
+
+    def _mid(self, mid: float) -> float:
+        if mid and mid > 0:
+            self.last_good_mid = float(mid)
+            return float(mid)
+        if self.last_good_mid and self.last_good_mid > 0:
+            return float(self.last_good_mid)
+        return 0.0
 
     def equity(self, mid: float) -> float:
-        return self.cash + self.position * mid
+        m = self._mid(mid)
+        return self.cash + self.position * m
 
     def mark_pnl(self, mid: float) -> float:
-        if self.position:
-            return self.realized_pnl + self.position * (mid - self.avg_entry)
+        m = self._mid(mid)
+        if self.position and m > 0:
+            return self.realized_pnl + self.position * (m - self.avg_entry)
         return self.realized_pnl
 
     def maybe_trade(
@@ -33,6 +44,8 @@ class Book:
         notional_usd: float | None = None,
     ) -> dict | None:
         px = ask if side == "buy" else bid
+        if mid and mid > 0:
+            self.last_good_mid = float(mid)
         if notional_usd is None:
             notional = self.equity(mid) * self.trade_frac
         else:
@@ -85,16 +98,48 @@ class Portfolio:
     realized_pnl: float = 0.0
     fills: list[dict] = field(default_factory=list)
     trade_frac: float = 0.01  # unused when notional_usd is provided
+    last_good_mids: dict[str, float] = field(default_factory=dict)
+
+    def remember_mids(self, mids: dict[str, float]) -> None:
+        for sym, mid in mids.items():
+            try:
+                m = float(mid)
+            except (TypeError, ValueError):
+                continue
+            if m > 0:
+                self.last_good_mids[sym] = m
+
+    def mark_mid(self, symbol: str, mid: float | None = None) -> float:
+        try:
+            m = float(mid) if mid is not None else 0.0
+        except (TypeError, ValueError):
+            m = 0.0
+        if m > 0:
+            self.last_good_mids[symbol] = m
+            return m
+        return float(self.last_good_mids.get(symbol) or 0.0)
 
     def equity(self, mids: dict[str, float]) -> float:
-        return self.cash + sum(qty * float(mids.get(sym, 0) or 0) for sym, qty in self.positions.items())
+        self.remember_mids(mids)
+        total = self.cash
+        for sym, qty in self.positions.items():
+            m = self.mark_mid(sym, mids.get(sym))
+            if m > 0:
+                total += qty * m
+            else:
+                # no usable mark — keep cost basis so equity does not fake-wipe
+                total += qty * float(self.avg_entry.get(sym) or 0.0)
+        return total
 
     def mark_pnl(self, mids: dict[str, float]) -> float:
+        self.remember_mids(mids)
         unreal = 0.0
         for sym, qty in self.positions.items():
-            mid = float(mids.get(sym, 0) or 0)
-            avg = self.avg_entry.get(sym, mid)
-            unreal += qty * (mid - avg)
+            m = self.mark_mid(sym, mids.get(sym))
+            avg = self.avg_entry.get(sym, m)
+            if m > 0 and avg is not None:
+                unreal += qty * (m - avg)
+            # if still no mid, contribute 0 unrealized (hold at cost)
         return self.realized_pnl + unreal
 
     def maybe_trade(
@@ -109,9 +154,11 @@ class Portfolio:
         notional_usd: float | None = None,
     ) -> dict | None:
         px = ask if side == "buy" else bid
+        if mid and mid > 0:
+            self.last_good_mids[symbol] = float(mid)
         mids = {symbol: mid}
         for s in self.positions:
-            mids.setdefault(s, self.avg_entry.get(s, 0.0))
+            mids.setdefault(s, self.last_good_mids.get(s) or self.avg_entry.get(s, 0.0))
         if notional_usd is None:
             notional = self.equity(mids) * self.trade_frac
         else:

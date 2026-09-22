@@ -1,86 +1,39 @@
 {
-  "name": "jev_paper_ab_2026_09_22",
-  "goal": "Best primary judgment + parallel variants on uncertain knobs; same Jev signal each tick",
-  "primary": "v_best",
-  "uncertain_axes": [
-    "open thresholds (noul / dir_tail)",
-    "toxicity cutoff",
-    "max notional",
-    "whether small_up/small_down count as tradeable"
-  ],
+  "name": "jev_paper_v2_2026_09_22",
+  "iteration": 2,
+  "goal": "Fix MTM; cap open names; stock RTH-only; 3-way compare on same Jev signal",
+  "primary": "v2_best",
+  "lessons_ref": "docs/strategy-iteration-log.md iteration 1",
   "variants": {
-    "v_best": {
+    "v2_best": {
       "role": "primary",
-      "why": "Balanced open bar + $250 cap + allow small moves; toxicity filter on",
-      "noul_min": 0.45,
-      "dir_tail_min": 0.42,
+      "why": "v2: last-good MTM + max 8 names + RTH stock; noul 0.42 / dir_tail 0.40 / tox 2.0 / cap $200",
+      "noul_min": 0.42,
+      "dir_tail_min": 0.40,
       "toxicity_max": 2.0,
-      "max_notional_usd": 250,
-      "allowed_moves": [
-        "large_up",
-        "small_up",
-        "large_down",
-        "small_down"
-      ],
+      "max_notional_usd": 200,
+      "allowed_moves": ["large_up", "small_up", "large_down", "small_down"],
       "size_mode": "jev_capped"
     },
-    "v_loose": {
+    "v2_loose": {
       "role": "compare",
-      "why": "Uncertain: maybe we are over-filtering \u2014 more fills",
+      "why": "Slightly looser gates (crypto lesson: loose edged best last run)",
       "noul_min": 0.35,
-      "dir_tail_min": 0.3,
-      "toxicity_max": 2.5,
-      "max_notional_usd": 500,
-      "allowed_moves": [
-        "large_up",
-        "small_up",
-        "large_down",
-        "small_down"
-      ],
+      "dir_tail_min": 0.32,
+      "toxicity_max": 2.4,
+      "max_notional_usd": 250,
+      "allowed_moves": ["large_up", "small_up", "large_down", "small_down"],
       "size_mode": "jev_capped"
     },
-    "v_strict": {
+    "v2_strict": {
       "role": "compare",
-      "why": "Uncertain: quality over quantity \u2014 fewer/higher-bar fills",
-      "noul_min": 0.55,
-      "dir_tail_min": 0.5,
-      "toxicity_max": 1.6,
+      "why": "Tighter gates + smaller size (stock lesson: strict/edge looked more resilient)",
+      "noul_min": 0.52,
+      "dir_tail_min": 0.48,
+      "toxicity_max": 1.7,
       "max_notional_usd": 100,
-      "allowed_moves": [
-        "large_up",
-        "small_up",
-        "large_down",
-        "small_down"
-      ],
+      "allowed_moves": ["large_up", "small_up", "large_down", "small_down"],
       "size_mode": "jev_capped"
-    },
-    "v_large_only": {
-      "role": "compare",
-      "why": "Uncertain: only large move buckets worth trading",
-      "noul_min": 0.45,
-      "dir_tail_min": 0.42,
-      "toxicity_max": 2.0,
-      "max_notional_usd": 250,
-      "allowed_moves": [
-        "large_up",
-        "large_down"
-      ],
-      "size_mode": "jev_capped"
-    },
-    "v_edge_size": {
-      "role": "compare",
-      "why": "Uncertain: ignore Jev size choice; size only from edge score map (still Jev edge)",
-      "noul_min": 0.45,
-      "dir_tail_min": 0.42,
-      "toxicity_max": 2.0,
-      "max_notional_usd": 250,
-      "allowed_moves": [
-        "large_up",
-        "small_up",
-        "large_down",
-        "small_down"
-      ],
-      "size_mode": "edge_only"
     }
   }
 }
