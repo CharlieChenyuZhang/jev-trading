@@ -45,8 +45,31 @@ def fetch_crypto_btc_usd() -> dict[str, Any]:
 
 def fetch_stock_aapl() -> dict[str, Any]:
     """Yahoo public chart — AAPL; TOB approximated from last + 1bp spread."""
+    import time
+    import urllib.error
+
     url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1m&range=1d"
-    raw = http_json(url)
+    raw = None
+    last_err: Exception | None = None
+    for attempt in range(4):
+        try:
+            raw = http_json(url, timeout=12.0)
+            break
+        except urllib.error.HTTPError as e:
+            last_err = e
+            # Yahoo often 429s under tight polling — back off and retry
+            if e.code == 429 and attempt < 3:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            if attempt < 3:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            raise
+    if raw is None:
+        raise last_err or RuntimeError("Yahoo chart fetch failed")
     result = raw["chart"]["result"][0]
     meta = result["meta"]
     quotes = result["indicators"]["quote"][0]

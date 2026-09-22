@@ -35,7 +35,8 @@ MARKETS: dict[str, dict[str, Any]] = {
         "noul_min": 0.65,  # slightly stricter for thinner TOB proxy
         "conf_min": 0.55,
         "default_duration_s": 45,
-        "interval_s": 2.5,
+        # Slower than crypto: Yahoo public chart rate-limits hard (HTTP 429)
+        "interval_s": 8.0,
         "shadows": [],  # overnight mostly hold; add shadows later in RTH if needed
     },
 }
