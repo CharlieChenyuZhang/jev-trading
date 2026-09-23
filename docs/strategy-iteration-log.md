@@ -957,3 +957,31 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~14:08–14:40 PT. Watch whether G’s BONK/FARTCOIN fade MTM holds into the final ~2–3h before ends_ts, whether the ~$77 lead stays above A, and prepare for FINAL at/after ends_ts (~16:30 PT) if both smokes have exited.
+
+## 2026-09-23 14:30 PT · iteration 32 · KEEP (G lead narrows on MTM · still #1 · book idle)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~2.0h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. Crypto `errors=23` (was 22; +1 this window, non-fatal); stock `errors=3` (was 2). Max crypto latency ~35s once; avg ~0.55s.
+- **Crypto post-restart (~7128 ticks / ~20.9h from $10k re-init):** primary **`exp_G_regime_mr` ≈ +$211.3 / 86 fills / 8 open**. Shadows by PnL: **G≈+$211.3/86f > A≈F ≈+$157.0/94f > H ≈+$107.0/91f > D $0/0f > C≈−$176/57f > B≈−$225/72f > E≈−$1007/1991f**. Regime mix all-run ~57% chop / ~43% trend (last-200 ~58% chop / 42% trend); trade_imbalance still ≈ 0. Live regime `trend` at reflect time.
+- **G≠A:** 36/86 primary fills opposite side vs A (all chop fades; 36/36). **45 same-side**, all `regime=trend` with `fade_applied=true` (momentum-correct vs A). **5 no-A**. `fade_applied=true` on **all 86/86** G fills (metadata always-on). Zero wrong-side trend or same-side chop bugs (`wrong_trend_opp=0`, `wrong_chop_same=0`).
+- **Hourly story:** iter-31 G lead ~$77 (G≈+$226 vs A≈+$149) **holds but narrows** — G now ≈+$211 vs A≈+$157 (G lead ~$54). Absolute G gave back ~−$15 MTM while A rose ~+$8; lead compression is asymmetric MTM (BONK/FARTCOIN shorts softened; A’s larger FARTCOIN short + divergent book helped A), **not** a fade flip or wrong-side trade. **No new G fills this window** (last still t6466 ZEN chop fade ~12:08 PT); capacity full at 8 names — hour was pure MTM. **BONK** short still the main G driver: u≈+$171.3 on ~$1.43k notional (was ~+$179). **FARTCOIN** short u≈+$72.7 on ~$1.43k (was ~+$78). Other G open: API3/PYTH green; VVV flat; ZEC/XRP soft red; ZEN soft red (~−$26). No stale/zero-mid marks. Fade path-dependence remains the lead’s mechanical core.
+- **Last ~1h:** **0** new G fills. Fill concentration all-run unchanged: BONK 31 / FARTCOIN 25 / VVV 16 / ZEN 7 / PYTH 3.
+- **Shadows:** B/C stay deep red (no new thin-book spike contenders). E exit overlay ~23× G fills and deepest red (~−$1007). H ≪ A ≡ F. D still 0 fills (imbalance≈0).
+- **Stock post-RTH close:** ~1242 ticks; `session_ok` False×1209 / True×377 (jsonl). Primary **A ≈ +$2.91 / 42 fills / 8 open** — unchanged vs iter-31 (idle MTM). Shadows: **A≈F≈H ≈+$2.91 > G ≈+$1.81/39f > C ≈+$0.28/17f > D=0 > B ≈−$0.55/28f > E ≈−$4.1/132f**. Noise conclusion for this wave stands; `last_ts` ~14:22 PT (idle).
+
+### Lessons learned
+1. **Good / KEEP validated late afternoon:** G lead held an eleventh consecutive hour (~$77→~$54) without a mid-wave CHANGE. G remains #1; both BONK/FARTCOIN shorts still green. Escalate rule (a) still not met — needs *sustained G≪A with fade losing on the same names across several hours*. Lead narrowed on MTM, not on fade bugs.
+2. **Watch / lead compression + idle book:** BONK ~$1.4k short + FARTCOIN ~$1.4k short still dominate (together ~+$244 unrealized vs book +$211 — other names net soft, ZEN −$26). Full 8-name capacity → zero new fills for a second straight hour. A’s rebound capacity (larger FARTCOIN short) is real and trimmed the lead ~$23 this hour — watch into FINAL whether lead stays clearly positive.
+3. **Watch / fade flag:** Still `fade_applied=true` on every G fill including pure trend momentum (45 trend same-side cases). Side selection in trend still matches A when A also fills; chop fades still 100% opposite A. Queue post-campaign label fix — **not** mid-wave strategy CHANGE.
+4. **Bad / reinforced:** E exit overlay deepest red (~−$1007). H ≪ A ≡ F. D still dead (imbalance≈0). B/C remain failed spike patterns on crypto. Crypto errors +1 this window (ops noise).
+5. **Stock / closed = noise for this wave:** Keep stock primary **exp_A_short** through ends_ts; no new evidence post-close.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the remaining ~2h window to FINAL; escalate only on (a) sustained G≪A with fade losing on the same names, (b) fade flag causing *wrong-side* trades, or (c) a clean multi-hour shadow edge (crypto-only). At/after ends_ts (~16:30 PT), if both smokes have exited, write FINAL and retire the hourly iterate routine.
+
+### Code / config changes (if any)
+- None this hour. (Optional later: fix `fade_applied` labeling on trend path so flag is false when regime=trend / no invert.)
+
+### Next observe window
+- Next hourly reflect ~15:08–15:40 PT. Watch whether G’s BONK/FARTCOIN fade MTM holds into the final ~1–2h before ends_ts, whether the ~$54 lead stays above A, and prepare for FINAL at/after ends_ts (~16:30 PT) if both smokes have exited.
