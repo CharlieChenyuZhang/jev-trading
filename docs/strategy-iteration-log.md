@@ -406,3 +406,31 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~19:08–19:40 PT. Confirm smokes stay up, whether G reclaim vs A as marks mean-revert, E churn stays junk, and stock remains flat until next RTH open.
+
+
+## 2026-09-22 19:24 PT · iteration 13 · KEEP (G reclaim vs A · post-restart ~2h)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~21h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. `errors=0` both markets since ops restart (~17:37 PT).
+- **Crypto post-restart (~620 ticks / ~1h47m from $10k re-init):** primary **`exp_G_regime_mr` ≈ +$7.7 / 15 fills / 8 open**. Shadows by PnL: **G ≈ +$7.7** > **E ≈ +$4.2 / 221f** (equity still ~$9973; heaviest churn) > **D = 0 fills / flat** > **A = F = H ≈ −$10.3 / 16f** > **C ≈ −$15 / 9f** > **B ≈ −$20 / 16f**. Regime mix ~63% chop / 37% trend; trade_imbalance still ≈ 0.
+- **G≠A verified:** all 8 open names opposite sign vs A; latest shared fill (VVV tick 373) `large_down→G buy / A sell` with `fade_applied=true` + `regime=chop`. All 15 primary fills are fade-shaped (`large_down→buy` or `large_up→sell`).
+- **Open markouts (G):** best API3 short ≈ +$6.1, PYTH short ≈ +$5.0, FARTCOIN short ≈ +$1.0; worst ZEN long ≈ −$2.8 (4× $100 stack), VVV long ≈ −$1.2, BONK short ≈ −$0.8. No stale/zero-mid marks.
+- **Stock overnight (~126 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok` blocking sized sells (e.g. NOW/ORCL signals with move=flat). Expected pre-RTH.
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~2680 lines; `stock.jsonl` ~476.
+
+### Lessons learned
+1. **Good / reclaim:** The early post-restart hour where A edged G (~+$5 vs −$6.5 at iter 12) **mean-reverted** — G now leads A by ~$18 on the same book wave. Matches the “do not CHANGE on one short opposing sample” call.
+2. **Good / mechanics:** Fade-on-primary still correct; G remains a true invert of A in chop; TimeoutError catch still holding (`errors=0`, max latency ~2.5s).
+3. **Bad / reinforced:** E exit overlay still ~15× G fills and is not a clean PnL winner (equity lag vs headline pnl). H ≡ A (same −$10.3 / 16f) — markout veto still not differentiating. C/D mostly silent (horizon / imbalance≈0).
+4. **Watch:** Capacity still clusters thin/meme names (ZEN 4-fill stack, BONK/FARTCOIN/API3/PYTH/AURORA-heavy picks). ZEN drag shrunk vs prior hour but stacking remains the main concentration risk — still **not** a mid-wave CHANGE without multi-hour + RTH evidence.
+5. Stock still uninformative overnight; wait for next RTH before any stock primary judgment.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; revisit thin-name / max-per-name only if G systematically trails *and* concentration is the clear driver across several hours.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~20:08–20:40 PT. Confirm G lead holds vs A/F/H, E churn stays junk, and whether stock remains flat until RTH open.
