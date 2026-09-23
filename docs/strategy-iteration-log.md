@@ -611,3 +611,31 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~02:08–02:40 PT. Watch whether G lead holds or re-flips, whether BONK/FARTCOIN concentration keeps dominating P&L, whether more trend fills mislabel `fade_applied`, and stock remains flat until RTH open.
+
+## 2026-09-23 02:26 PT · iteration 20 · KEEP (G–A re-flipped · still pre-RTH)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~14.1h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. Crypto `errors=4` (was 2; +2, still running); stock `errors=1` (was 0). Max crypto latency ~34s once; avg ~0.29s.
+- **Crypto post-restart (~3096 ticks / ~8.8h from $10k re-init):** primary **`exp_G_regime_mr` ≈ −$51.0 / 55 fills / 8 open**. Shadows by PnL: **A≈F≈+$16.3/56f > H≈+$15.4/53f > D=0f/flat > B≈−$1.2/32f > C≈−$14.6/13f > G≈−$51.0/55f > E≈−$280/923f**. Regime mix all-run ~62% chop / ~38% trend (last-200 ~64% trend / 36% chop); trade_imbalance still ≈ 0. Live regime `trend`.
+- **G≠A:** 32/55 primary fills opposite side vs A. **23 same-side**, all `regime=trend` with `fade_applied=true` (momentum-correct vs A): prior 16 + 7 new this hour (VVV t2883–2889×5, FARTCOIN t2926/2950). Chop fades remain opposite A. `fade_applied=true` on **all 55/55** G fills (metadata always-on).
+- **Hourly rank flip (main story):** iter-19 G lead ~$23 (G≈+$3 vs A≈−$20) **fully re-flipped** — A now ≈+$16 vs G≈−$51 (A lead ~$67). Drag again concentrated in **BONK**: G short stack u≈−$33 (~$1.3k notional) vs A long u≈+$2.9 — same fade thesis that recovered at iter-19 is bleeding again as BONK bounced. Other G open: ZEN long u≈−$9; FARTCOIN/API3/PYTH/XRP small green; VVV/ZEC soft. No stale/zero-mid marks.
+- **Last ~1h:** **8** new G fills (1× BONK chop fade opposite A; 5× VVV trend sell same-as-A; 2× FARTCOIN trend same-as-A). Capacity still full at 8 names. Fill concentration all-run: BONK 22 / FARTCOIN 14 / VVV 8 / ZEN 5.
+- **Stock overnight (~672 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok=false` on **all** post-restart ticks; ~71 sized signals correctly size-zeroed. Expected pre-RTH (`last_ts` ~02:23 PT).
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~5154 lines; `stock.jsonl` ~1018. Out run books remain the post-17:37 re-init wave.
+
+### Lessons learned
+1. **Good / KEEP validated again:** Overnight G lead at iter-19 mean-reverted within ~1h without a mid-wave CHANGE — same oscillation pattern as iter12–19 (A↔G leadership flips inside a wide MTM band). Reinforces **do not CHANGE on hourly rank flips**, especially pre-RTH.
+2. **Watch / fade flag:** Repeating metadata bug now 23 trend same-side cases; `fade_applied=true` on every G fill including pure trend momentum. Side selection in trend still matches A; no chop wrong-side bugs. Still queue post-campaign / low-risk label fix — **not** mid-wave strategy CHANGE.
+3. **Bad / reinforced:** E exit overlay ~17× G fills and deepest red (~−$280). H ≳ A ≡ F (markout veto skipped ~3 fills). D still 0 fills (imbalance≈0). C stays red after full mean-reversion from iter-15 spike.
+4. **Watch / concentration:** BONK ~$1.3k short + FARTCOIN/ZEN/VVV still dominate G path-dependence — observe through RTH rather than restart. A lead ~$67 is wide but concentration-driven and just flipped from G’s favor an hour ago.
+5. Stock still uninformative overnight; first stock judgment waits for next RTH open (~06:30 PT).
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; escalate only on (a) sustained G≪A *after* RTH with fade losing again on the same names across several post-open hours, (b) fade flag causing *wrong-side* trades, or (c) a clean multi-hour shadow edge that survives mean-reversion + RTH.
+
+### Code / config changes (if any)
+- None this hour. (Optional later: fix `fade_applied` labeling on trend path so flag is false when regime=trend / no invert.)
+
+### Next observe window
+- Next hourly reflect ~03:08–03:40 PT. Watch whether G–A gap mean-reverts again overnight, whether BONK/FARTCOIN/VVV concentration keeps dominating P&L, whether more trend fills mislabel `fade_applied`, and stock remains flat until RTH open.
