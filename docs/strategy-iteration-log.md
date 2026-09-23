@@ -434,3 +434,32 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~20:08–20:40 PT. Confirm G lead holds vs A/F/H, E churn stays junk, and whether stock remains flat until RTH open.
+
+## 2026-09-22 20:21 PT · iteration 14 · KEEP (G still leads A · lead compressed)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~20.1h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. `errors=0` both markets since ops restart (~17:37 PT).
+- **Crypto post-restart (~948 ticks / ~2h45m from $10k re-init):** primary **`exp_G_regime_mr` ≈ −$0.50 / 17 fills / 8 open**. Shadows by PnL: **D = 0 fills / flat** > **G ≈ −$0.5** > **A = F = H ≈ −$4.65 / 18f** > **C ≈ −$19.7 / 12f** > **B ≈ −$23.4 / 16f** > **E ≈ −$79.7 / 307f** (still heaviest churn). Regime mix ~67% chop / 33% trend; trade_imbalance still ≈ 0.
+- **G≠A verified:** 16/17 shared primary fills opposite side vs A. All but one primary fill are correct chop fades (`large_down→buy` / `large_up→sell`, `fade_applied=true`). Lead vs A compressed from iter-13 ~+$18 gap to ~+$4.2 — G no longer green but still best among active books.
+- **One anomaly (watch, not CHANGE):** tick 753 `BONK-USD` sell on `large_down` with `fade_applied=true` while `regime=trend` — side matches A (momentum-correct for trend) but fade flag should not claim a flip. Immediately followed by tick 756 chop fade buy BONK (opposite A). Net: metadata/edge-case, not a G≡A regression.
+- **Open markouts (G):** best API3 short ≈ +$3.9, PYTH short ≈ +$2.5, XRP long ≈ +$1.0; worst ZEN long ≈ −$2.6 (4× $100 stack), BONK short ≈ −$1.6, VVV long ≈ −$1.4, FARTCOIN short ≈ −$1.1. No stale/zero-mid marks.
+- **Stock overnight (~234 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok=false` blocked all 234 ticks; ~18 sized signals (AMZN/BA/DLTR/XLE etc.) correctly suppressed. Expected pre-RTH.
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~3008 lines; `stock.jsonl` ~579.
+
+### Lessons learned
+1. **Good / persistence:** G still leads A/F/H after ~2.7h post-restart despite lead mean-reverting from iter-13’s ~+$7.7. Matches “do not CHANGE on short opposing samples” — compressed lead ≠ failed fade.
+2. **Good / mechanics:** Fade-on-primary holds on 16/17 fills; TimeoutError catch still holding (`errors=0`, max latency ~2.5s).
+3. **Watch / single tick:** trend-regime fill with `fade_applied=true` + same side as A (BONK tick 753) — likely flag/path edge when regime flips mid-symbol; observe whether it repeats before touching `apply_regime_fade`.
+4. **Bad / reinforced:** E exit overlay ~18× G fills and deepest red (~−$80). H ≡ A (markout veto idle). C/D mostly silent (horizon / imbalance≈0). D “wins” only by not trading.
+5. **Watch:** ZEN 4-fill stack + thin/meme concentration (BONK/FARTCOIN/API3/PYTH/AURORA picks) still the main capacity risk — still **not** mid-wave CHANGE without multi-hour + next RTH evidence.
+6. Stock still uninformative overnight; wait for next RTH before any stock primary judgment.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; only escalate on repeated trend/fade flag bugs or sustained G≪A across several hours.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~21:08–21:40 PT. Confirm G lead vs A holds, whether BONK-style trend/fade flag anomaly repeats, E churn stays junk, and stock remains flat until RTH open.
