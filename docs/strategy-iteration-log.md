@@ -353,3 +353,29 @@ Implement and observe:
 
 ### Next observe window
 - Hourly reflect through ends_ts ~2026-09-23T23:30:55.713766+00:00. Confirm G continues to diverge from A in chop, and whether G leads shadows over a full day (incl. next RTH for stock).
+
+## 2026-09-22 17:38 PT · iteration 11 · KEEP (G fade ok · timeout crash ops fix)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~22.9h left). Stock PID stayed up overnight; **crypto PID 1284584 died ~17:19 PT** on uncaught `TimeoutError` in `call_jev` (OpenRouter SSL read). Dashboard 1137915 alive.
+- **Pre-crash crypto window (~270 ticks / ~47m from ~16:31 PT, archived `out/archive_crypto_ssl_timeout_20260922_173446/`):** primary **`exp_G_regime_mr` ≈ +$43.71 / 40 fills / 8 open**. Shadows by PnL: **G ≫ C=0 / D=0 > B ≈−$14 / 20f > E ≈−$21 / 104f > A=F ≈−$54 / 40f > H ≈−$64 / 27f**. **G≠A** gap ≈ **+$98** (G +44 vs A −54). All 40 primary fills had `fade_applied=true`; recent chop samples correct (e.g. BLUECHIP/AURORA `large_up→sell`). Open names: FARTCOIN long (+$29 uPnL), AURORA short (+$12), BLUECHIP short (−$6), plus DOGE/NEAR/TROLL/ZEC/BCH — thin-alt concentration persists but marks non-stale.
+- **Stock overnight (pre-restart ~86 ticks):** primary A flat **$0 / 0 fills** — `session_ok=false` correctly blocked sells (META/GM/CSCO signals). All A–H flat. Expected post-RTH.
+- **Ops:** Restarted crypto once (~17:34) → died again on same TimeoutError at tick≈2–3. Root cause: `call_jev` only caught `HTTPError`, so SSL read timeouts crashed the process. Patched + restarted both markets with remaining wall time to same ends_ts; books re-init **$10k** (pre-crash crypto books preserved in archive). Post-fix smoke: crypto fading again (`large_down→buy`, `fade_applied=true` on XRP/ZEC/VVV/ZEN); stock tick=1 RTH-closed flat.
+
+### Lessons learned
+1. **Good / confirmed:** Iteration-10 fade-on-primary fix holds — G diverges hard from A in chop and led the A–H board pre-crash (~+$44 vs A −$54).
+2. **Good:** Stock RTH guard still blocks overnight fills; zero invented wipeouts.
+3. **Bad / actionable (ops, not strategy):** Uncaught Jev `TimeoutError` hard-kills the paper loop. Must treat network timeouts like HTTP errors (log + continue), not process death.
+4. **Watch:** E still overtrades (104 vs G’s 40 fills) and stays red; H quiet but worst PnL; thin-alt picks (AURORA/BLUECHIP/FARTCOIN) still dominate capacity — observe through next RTH before any promote/demote.
+5. Early campaign (~1h) + clean G lead → **no strategy CHANGE / no new campaign wave**.
+
+### Strategy decision · KEEP
+- Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Ops-only: catch timeouts in `call_jev`, bump Jev HTTP timeout 30→45s, restart smokes to ends_ts (fresh $10k books after crash; JSONL append-only preserved under `logs/raw_decisions/`).
+
+### Code / config changes (if any)
+- `jev_trading/jev_client.py`: `call_jev` catches `TimeoutError` / `URLError` / `OSError` → `{error:true,status:"timeout"}`; timeout 45s.
+- `out/campaign_pids.json` updated; crypto pre-crash out archived; campaign.json annotated with ops restart notes. No experiment overlay / primary changes.
+
+### Next observe window
+- Next hourly reflect ~18:08–18:40 PT. Confirm smokes stay alive through timeouts (error ticks, not crashes), G still ≠ A, and stock remains flat until next RTH.
