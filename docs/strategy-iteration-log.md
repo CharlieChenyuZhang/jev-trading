@@ -582,3 +582,32 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~01:08–01:40 PT. Watch whether G–A gap mean-reverts overnight, whether BONK/FARTCOIN fade continues to bleed, whether more trend fills mislabel `fade_applied`, and stock remains flat until RTH open.
+
+## 2026-09-23 01:23 PT · iteration 19 · KEEP (G mean-reverted back to lead · BONK fade recovered)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~15.1h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. Crypto `errors=2` (unchanged); stock `errors=0`. Max crypto latency ~21s once; avg ~0.28s.
+- **Crypto post-restart (~2724 ticks / ~7.8h from $10k re-init):** primary **`exp_G_regime_mr` ≈ +$3.1 / 47 fills / 8 open**. Shadows by PnL: **G≈+$3.1/47f > D=0f/flat > C≈−$4.6/13f > H≈−$18.1/45f > B≈−$19.6/23f > A≈F≈−$20.0/48f > E≈−$249/817f**. Regime mix all-run ~63% chop / ~37% trend (last-200 50/50); trade_imbalance still ≈ 0. Live regime `chop`.
+- **G≠A:** 31/47 primary fills opposite side vs A. **16 same-side**, all `regime=trend` with `fade_applied=true` (momentum-correct vs A): prior 11 + 5 new BONK trend sells this hour (t2438/2441/2444/2462/2610). Plus 1 chop fade opposite A (ZEN sell t2528).
+- **Fade-flag anomaly (metadata):** 11/41 → **16/47** trend fills still mislabeled `fade_applied=true`. Side logic in trend still matches A; no new chop wrong-side bugs.
+- **Overnight mean-reversion (main story):** iter-18 A lead ~$60 (A≈+$26 vs G≈−$34) **fully flipped** — G now ≈+$3 vs A≈−$20 (G lead ~$23). H’s prior +$29 lead also mean-reverted to ≈−$18. Drag/recovery concentrated in **BONK**: G short stack u≈+$7.2 (~$1.2k notional) vs A long u≈−$10.5 — fade thesis that was bleeding at iter-18 recovered as BONK continued lower. Other G open: ZEN/VVV still soft red; API3/PYTH/XRP/ZEC/FARTCOIN small green. No stale/zero-mid marks.
+- **Last ~1h:** only **6** new G fills (5× BONK trend sell same-as-A + 1× ZEN chop fade). Capacity still full at 8 names.
+- **Stock overnight (~592 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok=false` on **all** post-restart ticks; 63 sized signals correctly size-zeroed. Expected pre-RTH (`last_ts` ~01:20 PT).
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~4780 lines; `stock.jsonl` ~937. Out run books remain the post-17:37 re-init wave.
+
+### Lessons learned
+1. **Good / KEEP validated:** The three-hour A>G widening (iter16–18, gap ~$8→$20→$60) **mean-reverted overnight** without a mid-wave CHANGE — exactly why hourly rank flips are not promote/demote signals. BONK fade recovery is the mechanical driver.
+2. **Watch / fade flag:** Repeating metadata bug now 16 trend cases; side selection still correct in trend. Still queue post-campaign / low-risk label fix — **not** mid-wave strategy CHANGE.
+3. **Bad / reinforced:** E exit overlay ~17× G fills and deepest red (~−$249). H ≳ A ≡ F idle markout/inv-skew. D still 0 fills (imbalance≈0). C stays near flat after full mean-reversion from iter-15 spike.
+4. **Watch / concentration:** BONK ~$1.2k short + FARTCOIN/ZEN/VVV still dominate G path-dependence — observe through RTH rather than restart.
+5. Stock still uninformative overnight; first stock judgment waits for next RTH open.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; escalate only on (a) sustained G≪A *after* RTH with fade losing again on the same names, (b) fade flag causing *wrong-side* trades, or (c) a clean multi-hour shadow edge that survives mean-reversion + RTH.
+
+### Code / config changes (if any)
+- None this hour. (Optional later: fix `fade_applied` labeling on trend path.)
+
+### Next observe window
+- Next hourly reflect ~02:08–02:40 PT. Watch whether G lead holds or re-flips, whether BONK/FARTCOIN concentration keeps dominating P&L, whether more trend fills mislabel `fade_applied`, and stock remains flat until RTH open.
