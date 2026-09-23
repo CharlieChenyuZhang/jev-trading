@@ -493,3 +493,32 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~22:08–22:40 PT. Confirm whether C lead holds or mean-reverts, G stays within noise of A/F/H, E churn stays junk, and stock remains flat until RTH open.
+
+## 2026-09-22 22:20 PT · iteration 16 · KEEP (G trails A in noise · C mean-reverted)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~18.2h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. Crypto `errors=1` (was 0; no crash / no TimeoutError traceback in run log; max latency ~6.8s once); stock `errors=0`.
+- **Crypto post-restart (~1650 ticks / ~4.7h from $10k re-init):** primary **`exp_G_regime_mr` ≈ −$11.4 / 18 fills / 8 open**. Shadows by PnL: **C_multi≈+$4.5–7.7/13f > D_imbalance≈+$0.0/0f > A_short≈F≈H≈−$3.3–4.3/19f > G≈−$11.4/18f > B_short_med≈−$30–34/17f > E_exit_overlay≈−$150/504f**. Regime mix ~67% chop / ~33% trend (live regime `chop`); trade_imbalance still ≈ 0.
+- **G≠A verified:** 17/18 shared fill ticks opposite side vs A. Sole same-side remains BONK tick 753 (trend/fade flag anomaly from iter 14) — **did not repeat**. Open books: 7/8 names opposite sign; BONK both short (G residual after 753 sell + 756 buy vs A’s short stack).
+- **C mean-reverted:** iter-15 spike ≈+$31 → now ≈+$5–8; still tops active books but path/name set (BLAST/B3/BLUECHIP/KARRAT/ALCX/CELR/ETC/L3) remains thin-alt — watch only, not promote.
+- **Capacity stall:** still **18** primary fills (last = VVV buy fade t982); 8/8 open names so primary is mark-to-market only this hour. Worst open: ZEN long u≈−$6.5 (4×$100 stack), BONK short u≈−$9.9; best PYTH short u≈+$3.5, XRP long u≈+$2.3. No stale/zero-mid marks.
+- **Stock overnight (~400 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok=false` + `rth_only` correctly zeroed size (e.g. NOW/SNAP/SCHW picks). Expected pre-RTH.
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~3710 lines; `stock.jsonl` ~752. Out run books remain the post-17:37 re-init wave.
+
+### Lessons learned
+1. **Good / C check:** The iter-15 C lead mean-reverted hard (−$23+ in ~1h) — confirms **do not promote on single-hour shadow spikes**, especially on thin-alt baskets.
+2. **Watch / G vs A:** G now trails A/F/H by ~$7–8 after oscillating inside a ~$10–20 band all evening (iter12 A>G → 13 G≫A → 14 G>A → 15≈tie → 16 A>G). Still **noise, not a multi-hour systematic fail** — KEEP primary G.
+3. **Good / mechanics:** Fade-on-primary still correct on 17/18 fills; capacity gate (max 8 names) working as designed (no new risk while full). Ops: one error tick without process death — timeout catch still holding.
+4. **Bad / reinforced:** E exit overlay ~28× G fills and deepest red (~−$150). H≡A≡F (markout veto / inv-skew idle). D still 0 fills (imbalance≈0). B stays red on multi-horizon disagree thrash.
+5. **Watch:** ZEN 4-fill stack + BONK/FARTCOIN/API3/PYTH/VVV concentration + capacity-full stall remain the main drag narrative — still **not** mid-wave CHANGE without sustained G≪A across several more hours and/or next RTH evidence.
+6. Stock still uninformative overnight; wait for next RTH before any stock primary judgment.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; escalate only on repeated trend/fade bugs, sustained G≪A across several hours, or a clean multi-hour C edge that survives mean-reversion + RTH.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~23:08–23:40 PT. Confirm whether G–A gap stays noise or widens, C stays compressed, E churn stays junk, and stock remains flat until RTH open.
