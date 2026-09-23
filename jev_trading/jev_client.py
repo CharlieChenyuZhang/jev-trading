@@ -181,8 +181,16 @@ def call_jev(api_key: str, state: str, questions: dict[str, Any]) -> tuple[dict[
     }
     t0 = time.perf_counter()
     try:
-        resp = http_json(JEV_URL, method="POST", headers=headers, body=body, timeout=30.0)
+        # 45s: intermittent OpenRouter SSL read stalls were hard-killing smokes at 30s
+        resp = http_json(JEV_URL, method="POST", headers=headers, body=body, timeout=45.0)
         return resp, (time.perf_counter() - t0) * 1000
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")[:500]
         return {"error": True, "status": e.code, "body": err_body}, (time.perf_counter() - t0) * 1000
+    except (TimeoutError, urllib.error.URLError, OSError) as e:
+        # Do not kill the paper loop on transient network/SSL timeouts
+        return {
+            "error": True,
+            "status": "timeout",
+            "body": f"{type(e).__name__}: {e}"[:500],
+        }, (time.perf_counter() - t0) * 1000
