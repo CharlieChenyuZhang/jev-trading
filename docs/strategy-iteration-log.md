@@ -379,3 +379,30 @@ Implement and observe:
 
 ### Next observe window
 - Next hourly reflect ~18:08–18:40 PT. Confirm smokes stay alive through timeouts (error ticks, not crashes), G still ≠ A, and stock remains flat until next RTH.
+
+## 2026-09-22 18:30 PT · iteration 12 · KEEP (post-timeout-fix wave · early G vs A)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` still active; ends_ts `2026-09-23T23:30:55.713766+00:00` (~29h left). Crypto PID 1317447 + stock PID 1317448 + dashboard 1137915 **alive**. `errors=0` on both live books since ops restart (~17:37 PT) — TimeoutError path no longer kills the loop.
+- **Crypto post-restart (~306 ticks / ~53m from $10k re-init):** primary **`exp_G_regime_mr` ≈ −$6.5 / 14 fills / 8 open**. Shadows by PnL: **A = F = H ≈ +$5 / 15f** > **C = D = 0 fills / flat** > **G ≈ −$6.5** > **B ≈ −$27 / 12f** > **E ≈ −$40–−$66 / 112f** (still heaviest churn). Regime mix ~70% chop / 30% trend; trade_imbalance still ≈ 0.
+- **G≠A verified:** all 8 open names opposite sign vs A; every shared fill tick is opposite side in chop (`large_down→G buy / A sell`, `large_up→G sell / A buy`). All 14 primary fills have `fade_applied=true` + `regime=chop`.
+- **Fill sample (right mechanics, mixed early markouts):** XRP/ZEC/VVV/ZEN buys on `large_down` fade; FARTCOIN/BONK/API3/PYTH sells on `large_up` fade. Worst open uPnL: ZEN long ≈ −$4.7 (4× $100 adds), BONK short ≈ −$4.6 (sub-cent), FARTCOIN short ≈ −$3.2; best: API3 short ≈ +$5.8, PYTH short ≈ +$2.2. No stale/zero-mid marks.
+- **Stock overnight (~32 ticks):** primary A flat **$0 / 0 fills**; all shadows flat. `session_ok=false` correctly blocked sized signals (AMZN/BDX/BUD etc.). Expected pre-RTH.
+- JSONL append-only: `logs/raw_decisions/crypto.jsonl` ~2365 lines; `stock.jsonl` ~377. Out run books are the post-17:37 re-init wave only.
+
+### Lessons learned
+1. **Good / ops:** Iteration-11 timeout catch is holding — 0 error ticks, continuous crypto loop through OpenRouter latency spikes (max ~2.5s, avg ~0.3s).
+2. **Good / mechanics:** Fade-on-primary still correct post-restart; G remains a true invert of A in chop, not an A-clone.
+3. **Watch / not actionable yet:** This ~1h book has **A slightly ahead of G** (~+$5 vs −$6.5), opposite the pre-crash ~1h archive where G led (~+$44 vs A −$54). Gap is small ($11) and books were re-seeded after crash — **do not CHANGE** on one short opposing sample; need multi-hour + next RTH.
+4. **Bad / reinforced:** E exit overlay still overtrades (~8× G fills) and stays red — research-only. H ≡ A this window (same fills/PnL) so markout veto is not differentiating yet. C/D silent (horizon disagree / imbalance≈0).
+5. **Watch:** Capacity still clusters thin/meme names (ZEN repeats, BONK/FARTCOIN/API3/PYTH); ZEN 4-fill stack drove early G drag. Observe whether a min-price / max-per-name rule becomes a clear CHANGE later — not mid-wave without a longer edge.
+
+### Strategy decision · KEEP
+- No strategy/code CHANGE. Keep crypto primary **exp_G_regime_mr**, stock primary **exp_A_short**, shadows A–H, same campaign id + ends_ts.
+- Continue hourly RSI through the 24h window; revisit promote/demote only if G systematically trails A for several hours *or* a concrete gate bug reappears.
+
+### Code / config changes (if any)
+- None.
+
+### Next observe window
+- Next hourly reflect ~19:08–19:40 PT. Confirm smokes stay up, whether G reclaim vs A as marks mean-revert, E churn stays junk, and stock remains flat until next RTH open.
