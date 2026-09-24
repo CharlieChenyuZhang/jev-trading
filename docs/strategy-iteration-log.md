@@ -1041,3 +1041,32 @@ Implement and observe:
 
 ### Next observe window
 - Next reflect ~16:35–16:45 PT should be **FINAL** if ends_ts passed and crypto+stock smokes have exited. Confirm G hold of ~$54 lead vs A at close; do not start a new wave from this routine.
+
+## 2026-09-23 17:31 PT · iteration 35 · FINAL·KEEP (campaign closed · G held #1 full post-restart window)
+
+### Observed
+- Campaign `G_primary_fade_fix_24h` **ended**. `ends_ts` `2026-09-23T23:30:55.713766+00:00` passed; crypto PID 1317447 + stock PID 1317448 **exited** cleanly near ends_ts (crypto `last_ts` 23:30:49Z, stock 23:30:22Z). Dashboard PID 1137915 still alive (left running). **No smoke restart; no new wave from this reflect.**
+- **Crypto FINAL (post-restart ~7830 ticks / ~22.9h from $10k re-init at 2026-09-23T00:37:02Z):** primary **`exp_G_regime_mr` ≈ +$185.19 / 88 fills / 8 open**. Shadows by PnL: **G≈+$185.19/88f > A≈F ≈+$129.12/96f > H ≈+$79.00/93f > D $0/0f > C≈−$185.96/57f > B≈−$249.58/73f > E≈−$1083.30/2198f**. Regime mix all-run ~57% chop / ~43% trend (last-200 ~84% chop / 16% trend); trade_imbalance ≈ 0 at close. Live regime at last tick: `chop`. Crypto `errors=24` (unchanged vs iter-34).
+- **G≠A (full wave):** 38/88 primary fills opposite side vs A (all chop fades; 38/38). **45 same-side**, all `regime=trend` (`trend_same=45`). **5 no-A**. `fade_applied=true` on **all 88/88** G fills (metadata always-on). Zero wrong-side bugs (`wrong_trend_opp=0`, `wrong_chop_same=0`).
+- **Close vs iter-34:** G ~+$189 → **+$185** (≈−$4 MTM); A ~+$135 → **+$129** (≈−$6); **G lead ~$54 → ~$56** (held / slightly wider). **No new G fills** after iter-34’s PYTH chop fade buy t7655 (~16:00 PT) — last fill of the wave. Capacity stayed full at 8 names into close.
+- **Open book at FINAL (unrealized):** **BONK** short u≈+$167.2 on ~$1.43k; **FARTCOIN** short u≈+$54.6 on ~$1.45k; API3/PYTH green; VVV ~flat; ZEC/XRP soft red; ZEN soft red (~−$26). No stale/zero-mid marks. Fill concentration: BONK 31 / FARTCOIN 25 / VVV 16 / ZEN 7 / PYTH 5 / API3 2 / XRP 1 / ZEC 1.
+- **Shadows FINAL:** B/C deep red (failed spike patterns). E exit overlay ~25× G fills and deepest red (~−$1083). H ≪ A ≡ F. D 0 fills (imbalance≈0 all wave).
+- **Stock FINAL (post-RTH idle):** ~1318 ticks; primary **`exp_A_short` ≈ +$2.91 / 42 fills / 8 open**. Shadows: **A≈F≈H ≈+$2.91 > G ≈+$1.81/39f > C ≈+$0.28/17f > D=0 > B ≈−$0.55/28f > E ≈−$4.08/132f**. `errors=3`. Stock result is noise for this wave (RTH-only, small PnL).
+
+### Lessons learned
+1. **Good / FINAL·KEEP — G won the wave:** Crypto primary `exp_G_regime_mr` finished #1 for the full post-restart ~23h window with lead ~$56 vs A at close. Chop fades were 100% opposite A when both filled; trend same-side matched A. Escalate rules (a)/(b)/(c) never met mid-wave.
+2. **Good / fade edge is real but concentrated:** BONK + FARTCOIN shorts carried most of the book (~+$222 unrealized vs book +$185). Path-dependence of max-8 capacity + early fade shorts explains the lead; not a broad multi-name edge.
+3. **Watch / fade_applied label:** Still true on every G fill including pure trend momentum (45 trend same-side). Side selection was correct; **queue a post-campaign label fix** (flag false when regime=trend / no invert) — not a strategy CHANGE for a closed wave.
+4. **Bad / discard for next wave:** E exit overlay (deep red, extreme churn). B/C spike patterns. D imbalance (dead while imbalance≈0). H markout veto strictly worse than A≡F.
+5. **Stock / noise:** Keep `exp_A_short` as stock default or deprioritize stock in the next crypto-focused wave; G on stock underperformed A slightly (+$1.81 vs +$2.91).
+
+### Strategy decision · FINAL·KEEP
+- **Campaign closed.** Do not restart smokes; do not open a new wave from this reflect. Human owns next research org / experiment edit.
+- **Recommendation for next wave (paper):** crypto primary **keep `exp_G_regime_mr` (regime-fade)**; stock primary **keep `exp_A_short`** or shrink stock weight; shadows can drop or demote E/B/C/D; optional keep A/F/H as controls. Apply `fade_applied` label fix before or at next wave start.
+- Retire the hourly strategy-iterate loop for this campaign (push-accum can remain if still desired for log sync).
+
+### Code / config changes (if any)
+- None at FINAL close. Queued only: fix `fade_applied` labeling on trend path.
+
+### Next observe window
+- **None for this campaign.** Next wave starts only when human sets a new campaign id + ends_ts and restarts smokes. Prior books remain under `out/{crypto,stock}/` and archives; JSONL history append-only preserved.
